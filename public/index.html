@@ -6,308 +6,98 @@
   <title>Rize Vietnam — Báo cáo vấn đề</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
       --green: #1a6b3c;
       --green-dark: #134d2c;
       --green-light: #e8f5ee;
-      --user-bubble: #1a6b3c;
       --bot-bubble: #f0f0f0;
       --text-dark: #1a1a1a;
-      --text-light: #666;
       --bg: #f5f5f5;
-      --white: #ffffff;
       --shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
 
     /* Header */
-    .header {
-      background: var(--green);
-      color: white;
-      padding: 14px 16px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      box-shadow: var(--shadow);
-      flex-shrink: 0;
-      z-index: 10;
-    }
-    .header-avatar {
-      width: 40px; height: 40px;
-      background: white;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
-      flex-shrink: 0;
-    }
+    .header { background: var(--green); color: white; padding: 14px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); flex-shrink: 0; }
+    .header-avatar { width: 40px; height: 40px; background: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
     .header-info h1 { font-size: 16px; font-weight: 600; }
     .header-info p { font-size: 12px; opacity: 0.8; }
-    .online-dot {
-      width: 8px; height: 8px;
-      background: #4ade80;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 4px;
-    }
+    .online-dot { width: 8px; height: 8px; background: #4ade80; border-radius: 50%; display: inline-block; margin-right: 4px; }
 
-    /* Chat area */
-    .chat-area {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      scroll-behavior: smooth;
-    }
+    /* Chat */
+    .chat-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
 
     /* Messages */
-    .message-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-      animation: fadeIn 0.2s ease;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+    .message-row { display: flex; align-items: flex-end; gap: 8px; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .message-row.user { flex-direction: row-reverse; }
 
-    .avatar {
-      width: 30px; height: 30px;
-      border-radius: 50%;
-      background: var(--green);
-      color: white;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
-      flex-shrink: 0;
-    }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--green); color: white; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
 
-    .bubble {
-      max-width: 75%;
-      padding: 10px 14px;
-      border-radius: 18px;
-      line-height: 1.5;
-      font-size: 14.5px;
-      word-wrap: break-word;
-      white-space: pre-wrap;
-    }
-    .bubble.bot {
-      background: var(--bot-bubble);
-      color: var(--text-dark);
-      border-bottom-left-radius: 4px;
-    }
-    .bubble.user {
-      background: var(--user-bubble);
-      color: white;
-      border-bottom-right-radius: 4px;
-    }
-    .bubble strong, .bubble b { font-weight: 600; }
+    .bubble { max-width: 78%; padding: 10px 14px; border-radius: 18px; line-height: 1.55; font-size: 14.5px; word-wrap: break-word; white-space: pre-wrap; }
+    .bubble.bot { background: var(--bot-bubble); color: var(--text-dark); border-bottom-left-radius: 4px; }
+    .bubble.user { background: var(--green); color: white; border-bottom-right-radius: 4px; }
 
-    /* Typing indicator */
-    .typing-indicator {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .typing-dots {
-      background: var(--bot-bubble);
-      padding: 12px 16px;
-      border-radius: 18px;
-      border-bottom-left-radius: 4px;
-      display: flex;
-      gap: 4px;
-      align-items: center;
-    }
-    .typing-dots span {
-      width: 8px; height: 8px;
-      background: #aaa;
-      border-radius: 50%;
-      animation: bounce 1.2s infinite;
-    }
+    /* Typing */
+    .typing-indicator { display: flex; align-items: center; gap: 8px; }
+    .typing-dots { background: var(--bot-bubble); padding: 12px 16px; border-radius: 18px; border-bottom-left-radius: 4px; display: flex; gap: 4px; align-items: center; }
+    .typing-dots span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
     .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
     .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes bounce {
-      0%, 60%, 100% { transform: translateY(0); }
-      30% { transform: translateY(-6px); }
-    }
+    @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
     /* Quick replies */
-    .quick-replies {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      padding: 4px 0 4px 38px;
-    }
-    .qr-btn {
-      background: white;
-      border: 1.5px solid var(--green);
-      color: var(--green);
-      padding: 8px 16px;
-      border-radius: 20px;
-      font-size: 14px;
-      cursor: pointer;
-      transition: all 0.15s;
-      font-weight: 500;
-    }
-    .qr-btn:hover, .qr-btn:active {
-      background: var(--green);
-      color: white;
-    }
-    .qr-btn:disabled { opacity: 0.5; pointer-events: none; }
+    .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 4px 38px; }
+    .qr-btn { background: white; border: 1.5px solid var(--green); color: var(--green); padding: 8px 16px; border-radius: 20px; font-size: 14px; cursor: pointer; transition: all 0.15s; font-weight: 500; }
+    .qr-btn:hover, .qr-btn:active { background: var(--green); color: white; }
+    .qr-btn:disabled { opacity: 0.4; pointer-events: none; }
 
-    /* Image preview in chat */
-    .image-bubble {
-      max-width: 220px;
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: var(--shadow);
-    }
-    .image-bubble img {
-      width: 100%;
-      display: block;
-    }
+    /* Image grid in chat */
+    .image-grid { display: flex; flex-wrap: wrap; gap: 6px; max-width: 280px; }
+    .image-grid img { width: 130px; height: 100px; object-fit: cover; border-radius: 10px; cursor: pointer; }
+    .image-grid img:only-child { width: 200px; height: 160px; }
 
     /* Input area */
-    .input-area {
-      background: white;
-      border-top: 1px solid #e0e0e0;
-      padding: 10px 12px;
-      flex-shrink: 0;
-    }
+    .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 10px 12px; flex-shrink: 0; }
 
-    /* Upload preview bar */
-    .upload-preview {
-      display: none;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
-      background: var(--green-light);
-      border-radius: 10px;
-      margin-bottom: 8px;
-    }
-    .upload-preview.visible { display: flex; }
-    .upload-preview img {
-      width: 44px; height: 44px;
-      object-fit: cover;
-      border-radius: 6px;
-    }
-    .upload-preview-name {
-      flex: 1;
-      font-size: 13px;
-      color: var(--green-dark);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .remove-upload {
-      background: none;
-      border: none;
-      color: #999;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 0 4px;
-    }
+    /* Image previews strip */
+    .previews-strip { display: none; gap: 8px; padding: 8px 0; overflow-x: auto; margin-bottom: 6px; }
+    .previews-strip.visible { display: flex; }
+    .preview-item { position: relative; flex-shrink: 0; }
+    .preview-item img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; display: block; }
+    .preview-remove { position: absolute; top: -6px; right: -6px; background: #e53e3e; color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
 
-    .input-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-    }
+    /* Upload prompt */
+    .upload-prompt { display: none; background: var(--green-light); border: 1.5px dashed var(--green); border-radius: 10px; padding: 12px; text-align: center; margin-bottom: 8px; cursor: pointer; font-size: 14px; color: var(--green-dark); }
+    .upload-prompt.visible { display: block; }
 
-    .input-box {
-      flex: 1;
-      background: #f5f5f5;
-      border: 1.5px solid transparent;
-      border-radius: 22px;
-      padding: 10px 16px;
-      font-size: 15px;
-      outline: none;
-      resize: none;
-      max-height: 100px;
-      line-height: 1.4;
-      transition: border-color 0.2s;
-      font-family: inherit;
-    }
+    .input-row { display: flex; align-items: flex-end; gap: 8px; }
+    .input-box { flex: 1; background: #f5f5f5; border: 1.5px solid transparent; border-radius: 22px; padding: 10px 16px; font-size: 15px; outline: none; resize: none; max-height: 100px; line-height: 1.4; transition: border-color 0.2s; font-family: inherit; }
     .input-box:focus { border-color: var(--green); background: white; }
     .input-box::placeholder { color: #aaa; }
 
-    .attach-btn {
-      width: 42px; height: 42px;
-      background: #f0f0f0;
-      border: none;
-      border-radius: 50%;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
-      transition: background 0.15s;
-      flex-shrink: 0;
-    }
+    .attach-btn { width: 42px; height: 42px; background: #f0f0f0; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: background 0.15s; flex-shrink: 0; position: relative; }
     .attach-btn:hover { background: #e0e0e0; }
-    .attach-btn.has-file { background: var(--green-light); }
+    .attach-count { position: absolute; top: -4px; right: -4px; background: var(--green); color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: none; align-items: center; justify-content: center; font-weight: 700; }
+    .attach-count.visible { display: flex; }
 
-    .send-btn {
-      width: 42px; height: 42px;
-      background: var(--green);
-      border: none;
-      border-radius: 50%;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s;
-      flex-shrink: 0;
-    }
+    .send-btn { width: 42px; height: 42px; background: var(--green); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; flex-shrink: 0; }
     .send-btn:hover { background: var(--green-dark); }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
     .send-btn svg { fill: white; width: 18px; height: 18px; }
 
     #file-input { display: none; }
 
-    /* Upload prompt (shown when bot asks for photo) */
-    .upload-prompt {
-      display: none;
-      background: var(--green-light);
-      border: 1.5px dashed var(--green);
-      border-radius: 12px;
-      padding: 14px;
-      text-align: center;
-      margin-bottom: 8px;
-      cursor: pointer;
-    }
-    .upload-prompt.visible { display: block; }
-    .upload-prompt-text {
-      font-size: 13px;
-      color: var(--green-dark);
-      margin-top: 4px;
-    }
+    /* Report ID badge */
+    .report-badge { background: var(--green); color: white; text-align: center; padding: 14px 16px; border-radius: 12px; margin: 0 38px; animation: fadeIn 0.3s ease; }
+    .report-badge .id { font-size: 20px; font-weight: 700; letter-spacing: 1px; font-family: monospace; margin: 6px 0; }
+    .report-badge .hint { font-size: 12px; opacity: 0.8; }
 
-    /* Success banner */
-    .success-banner {
-      background: var(--green);
-      color: white;
-      text-align: center;
-      padding: 12px;
-      font-size: 14px;
-      animation: fadeIn 0.3s ease;
-    }
-    .report-id-badge {
-      display: inline-block;
-      background: rgba(255,255,255,0.2);
-      border-radius: 8px;
-      padding: 2px 10px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      margin-top: 4px;
-    }
+    /* Lightbox */
+    .lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; align-items: center; justify-content: center; }
+    .lightbox.open { display: flex; }
+    .lightbox img { max-width: 95vw; max-height: 90vh; border-radius: 8px; }
+    .lightbox-close { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -323,37 +113,52 @@
 <div class="chat-area" id="chatArea"></div>
 
 <div class="input-area">
-  <div class="upload-preview" id="uploadPreview">
-    <img id="previewThumb" src="" alt="preview" />
-    <span class="upload-preview-name" id="previewName"></span>
-    <button class="remove-upload" onclick="removeImage()" title="Xóa ảnh">✕</button>
-  </div>
-  <div class="upload-prompt" id="uploadPrompt" onclick="document.getElementById('file-input').click()">
-    📷 <strong>Nhấn để đính kèm ảnh</strong>
-    <div class="upload-prompt-text">Hỗ trợ JPG, PNG, GIF (tối đa 10MB)</div>
+  <div class="previews-strip" id="previewsStrip"></div>
+  <div class="upload-prompt" id="uploadPrompt" onclick="triggerFileInput()">
+    📷 <strong>Nhấn để đính kèm ảnh</strong> — có thể chọn nhiều ảnh cùng lúc
   </div>
   <div class="input-row">
-    <input type="file" id="file-input" accept="image/*" capture="environment" onchange="handleFileSelect(event)" />
-    <button class="attach-btn" id="attachBtn" onclick="document.getElementById('file-input').click()" title="Đính kèm ảnh">📎</button>
-    <textarea
-      class="input-box"
-      id="inputBox"
-      placeholder="Nhập tin nhắn..."
-      rows="1"
-      onkeydown="handleKeyDown(event)"
-      oninput="autoResize(this)"
-    ></textarea>
-    <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Gửi">
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-      </svg>
+    <input type="file" id="file-input" accept="image/*" multiple onchange="handleFileSelect(event)" />
+    <button class="attach-btn" id="attachBtn" onclick="triggerFileInput()" title="Đính kèm ảnh">
+      📎
+      <span class="attach-count" id="attachCount">0</span>
+    </button>
+    <textarea class="input-box" id="inputBox" placeholder="Nhập tin nhắn..." rows="1"
+      onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+      <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
     </button>
   </div>
 </div>
 
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <span class="lightbox-close">✕</span>
+  <img id="lightboxImg" src="" alt="" />
+</div>
+
 <script>
-  const SESSION_ID = 'session_' + Math.random().toString(36).slice(2);
-  let pendingImageData = null;
+  // ── Session + History persistence ─────────────────────────────────────────
+  const STORAGE_KEY = 'rize_session_v2';
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch(e) {}
+
+  const SESSION_ID = (stored && stored.sessionId) ? stored.sessionId : 'session_' + Math.random().toString(36).slice(2);
+  let chatHistory = (stored && stored.history) ? stored.history : [];
+
+  function saveToStorage() {
+    // Only keep last 50 history items and strip large image data
+    const trimmed = chatHistory.slice(-50).map(h => ({
+      ...h,
+      images: h.images ? h.images.map(() => '[image]') : undefined
+    }));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId: SESSION_ID, history: trimmed }));
+    } catch(e) {}
+  }
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let pendingImages = []; // array of base64 data URLs
   let isWaiting = false;
   let showUploadUI = false;
 
@@ -361,55 +166,65 @@
   const inputBox = document.getElementById('inputBox');
   const sendBtn = document.getElementById('sendBtn');
   const uploadPrompt = document.getElementById('uploadPrompt');
-  const uploadPreview = document.getElementById('uploadPreview');
+  const previewsStrip = document.getElementById('previewsStrip');
   const attachBtn = document.getElementById('attachBtn');
+  const attachCount = document.getElementById('attachCount');
 
   // ── Init ──────────────────────────────────────────────────────────────────
   window.addEventListener('load', () => {
-    fetch('/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: SESSION_ID, text: '__init__' })
-    })
-    .then(r => r.json())
-    .then(handleResponse)
-    .catch(() => appendBot('Xin chào! 👋 Hãy mô tả vấn đề bạn gặp phải.'));
+    // Restore previous chat history from localStorage
+    if (chatHistory.length > 0) {
+      chatHistory.forEach(item => {
+        if (item.type === 'bot') renderBotBubble(item.text, false);
+        else if (item.type === 'user') renderUserBubble(item.text, false);
+        else if (item.type === 'images') renderUserImages(item.placeholders || [], false);
+        else if (item.type === 'qr') renderQuickReplies(item.replies, true); // disabled
+        else if (item.type === 'badge') renderReportBadge(item.reportId, false);
+      });
+      scrollToBottom();
+    } else {
+      // Fresh start
+      fetch('/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: SESSION_ID, text: '__init__', images: [] })
+      })
+      .then(r => r.json())
+      .then(handleResponse)
+      .catch(() => renderBotBubble('Xin chào! 👋 Hãy mô tả vấn đề bạn gặp phải.'));
+    }
   });
 
-  // ── Send message ──────────────────────────────────────────────────────────
+  // ── Send ──────────────────────────────────────────────────────────────────
   async function sendMessage(quickReplyText) {
     const text = quickReplyText || inputBox.value.trim();
-    if ((!text && !pendingImageData) || isWaiting) return;
+    if ((!text && pendingImages.length === 0) || isWaiting) return;
 
-    // Show user bubble
-    if (text) appendUser(text);
-    if (pendingImageData && !quickReplyText) appendUserImage(pendingImageData);
+    // Render user message
+    if (text) renderUserBubble(text, true);
+    if (pendingImages.length > 0) renderUserImages(pendingImages, true);
 
     inputBox.value = '';
     autoResize(inputBox);
     disableQuickReplies();
-    showTyping();
+    renderTyping();
     setWaiting(true);
 
-    const imageToSend = pendingImageData;
-    pendingImageData = null;
-    uploadPreview.classList.remove('visible');
-    attachBtn.classList.remove('has-file');
-    uploadPrompt.classList.remove('visible');
-    showUploadUI = false;
+    const imagesToSend = [...pendingImages];
+    clearPendingImages();
 
     try {
       const res = await fetch('/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: SESSION_ID, text, imageData: imageToSend })
+        body: JSON.stringify({ sessionId: SESSION_ID, text, images: imagesToSend })
       });
       const data = await res.json();
       removeTyping();
       handleResponse(data);
     } catch (e) {
       removeTyping();
-      appendBot('Có lỗi xảy ra. Vui lòng thử lại.');
+      renderBotBubble('Có lỗi xảy ra. Vui lòng thử lại.');
     }
 
     setWaiting(false);
@@ -417,91 +232,84 @@
 
   function handleResponse(data) {
     if (!data) return;
-
-    // Show messages
-    if (data.messages) {
-      data.messages.forEach(msg => appendBot(msg));
-    }
-
-    // Show quick replies
-    if (data.quickReplies && data.quickReplies.length) {
-      appendQuickReplies(data.quickReplies);
-    }
-
-    // Show upload UI
-    if (data.showUpload) {
-      showUploadUI = true;
-      uploadPrompt.classList.add('visible');
-    }
-
-    // Success
-    if (data.done && data.reportId) {
-      showSuccessBanner(data.reportId);
-    }
-
+    if (data.messages) data.messages.forEach(msg => renderBotBubble(msg, true));
+    if (data.quickReplies && data.quickReplies.length) renderQuickReplies(data.quickReplies, false);
+    if (data.showUpload) { showUploadUI = true; uploadPrompt.classList.add('visible'); }
+    if (data.done && data.reportId) renderReportBadge(data.reportId, true);
     scrollToBottom();
   }
 
-  // ── DOM helpers ───────────────────────────────────────────────────────────
-  function appendBot(text) {
+  // ── Render helpers ────────────────────────────────────────────────────────
+  function renderBotBubble(text, save) {
     const row = document.createElement('div');
     row.className = 'message-row bot';
-    row.innerHTML = `
-      <div class="avatar">🌾</div>
-      <div class="bubble bot">${formatText(text)}</div>
-    `;
+    row.innerHTML = `<div class="avatar">🌾</div><div class="bubble bot">${formatText(text)}</div>`;
     chatArea.appendChild(row);
-    scrollToBottom();
+    if (save) { chatHistory.push({ type: 'bot', text }); saveToStorage(); }
   }
 
-  function appendUser(text) {
+  function renderUserBubble(text, save) {
     const row = document.createElement('div');
     row.className = 'message-row user';
     row.innerHTML = `<div class="bubble user">${escapeHtml(text)}</div>`;
     chatArea.appendChild(row);
+    if (save) { chatHistory.push({ type: 'user', text }); saveToStorage(); }
   }
 
-  function appendUserImage(dataUrl) {
+  function renderUserImages(images, save) {
     const row = document.createElement('div');
     row.className = 'message-row user';
-    row.innerHTML = `<div class="image-bubble"><img src="${dataUrl}" alt="Ảnh đính kèm" /></div>`;
+    const grid = document.createElement('div');
+    grid.className = 'image-grid';
+    images.forEach((src, i) => {
+      const img = document.createElement('img');
+      img.src = (src === '[image]') ? 'data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==' : src;
+      img.alt = `Ảnh ${i + 1}`;
+      if (src !== '[image]') img.onclick = () => openLightbox(src);
+      grid.appendChild(img);
+    });
+    row.appendChild(grid);
     chatArea.appendChild(row);
+    if (save) {
+      chatHistory.push({ type: 'images', placeholders: images.map(() => '[image]') });
+      saveToStorage();
+    }
   }
 
-  function appendQuickReplies(replies) {
+  function renderQuickReplies(replies, disabled) {
     const container = document.createElement('div');
     container.className = 'quick-replies';
-    container.id = 'current-qr';
+    container.id = disabled ? '' : 'current-qr';
     replies.forEach(reply => {
       const btn = document.createElement('button');
       btn.className = 'qr-btn';
       btn.textContent = reply;
-      btn.onclick = () => {
-        disableQuickReplies();
-        sendMessage(reply);
-      };
+      btn.disabled = disabled;
+      if (!disabled) btn.onclick = () => { disableQuickReplies(); sendMessage(reply); };
       container.appendChild(btn);
     });
     chatArea.appendChild(container);
-    scrollToBottom();
-  }
-
-  function disableQuickReplies() {
-    const qr = document.getElementById('current-qr');
-    if (qr) {
-      qr.querySelectorAll('.qr-btn').forEach(b => b.disabled = true);
-      qr.removeAttribute('id');
+    if (!disabled) {
+      chatHistory.push({ type: 'qr', replies });
+      saveToStorage();
     }
   }
 
-  function showTyping() {
+  function renderReportBadge(reportId, save) {
+    const badge = document.createElement('div');
+    badge.className = 'report-badge';
+    badge.innerHTML = `✅ Báo cáo đã gửi thành công!<div class="id">${reportId}</div><div class="hint">Lưu mã này để kiểm tra trạng thái sau</div>`;
+    chatArea.appendChild(badge);
+    if (save) { chatHistory.push({ type: 'badge', reportId }); saveToStorage(); }
+    // Clear chat history after successful submit so next session is fresh
+    setTimeout(() => { chatHistory = []; saveToStorage(); }, 500);
+  }
+
+  function renderTyping() {
     const row = document.createElement('div');
     row.className = 'typing-indicator';
     row.id = 'typing';
-    row.innerHTML = `
-      <div class="avatar">🌾</div>
-      <div class="typing-dots"><span></span><span></span><span></span></div>
-    `;
+    row.innerHTML = `<div class="avatar">🌾</div><div class="typing-dots"><span></span><span></span><span></span></div>`;
     chatArea.appendChild(row);
     scrollToBottom();
   }
@@ -511,42 +319,80 @@
     if (t) t.remove();
   }
 
-  function showSuccessBanner(reportId) {
-    const banner = document.createElement('div');
-    banner.className = 'success-banner';
-    banner.innerHTML = `✅ Báo cáo đã được gửi!<br><span class="report-id-badge">${reportId}</span>`;
-    chatArea.appendChild(banner);
-    scrollToBottom();
+  function disableQuickReplies() {
+    const qr = document.getElementById('current-qr');
+    if (qr) { qr.querySelectorAll('.qr-btn').forEach(b => b.disabled = true); qr.removeAttribute('id'); }
   }
 
-  // ── Image upload ──────────────────────────────────────────────────────────
+  // ── Image handling ────────────────────────────────────────────────────────
+  function triggerFileInput() {
+    document.getElementById('file-input').click();
+  }
+
   function handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = Array.from(event.target.files);
+    if (!files.length) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert('Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 10MB.');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      pendingImageData = e.target.result;
-      document.getElementById('previewThumb').src = pendingImageData;
-      document.getElementById('previewName').textContent = file.name;
-      uploadPreview.classList.add('visible');
-      attachBtn.classList.add('has-file');
-      uploadPrompt.classList.remove('visible');
-    };
-    reader.readAsDataURL(file);
+    files.forEach(file => {
+      if (file.size > 10 * 1024 * 1024) {
+        alert(`Ảnh "${file.name}" quá lớn (>10MB). Vui lòng chọn ảnh nhỏ hơn.`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        pendingImages.push(e.target.result);
+        renderPreviewStrip();
+      };
+      reader.readAsDataURL(file);
+    });
     event.target.value = '';
   }
 
-  function removeImage() {
-    pendingImageData = null;
-    uploadPreview.classList.remove('visible');
-    attachBtn.classList.remove('has-file');
-    if (showUploadUI) uploadPrompt.classList.add('visible');
+  function renderPreviewStrip() {
+    previewsStrip.innerHTML = '';
+    if (pendingImages.length === 0) {
+      previewsStrip.classList.remove('visible');
+      attachCount.classList.remove('visible');
+      return;
+    }
+    previewsStrip.classList.add('visible');
+    attachCount.textContent = pendingImages.length;
+    attachCount.classList.add('visible');
+
+    pendingImages.forEach((src, i) => {
+      const item = document.createElement('div');
+      item.className = 'preview-item';
+      item.innerHTML = `
+        <img src="${src}" alt="preview ${i+1}" />
+        <button class="preview-remove" onclick="removeImage(${i})">✕</button>
+      `;
+      previewsStrip.appendChild(item);
+    });
+    uploadPrompt.classList.remove('visible');
+  }
+
+  function removeImage(index) {
+    pendingImages.splice(index, 1);
+    renderPreviewStrip();
+    if (pendingImages.length === 0 && showUploadUI) {
+      uploadPrompt.classList.add('visible');
+    }
+  }
+
+  function clearPendingImages() {
+    pendingImages = [];
+    renderPreviewStrip();
+    uploadPrompt.classList.remove('visible');
+    showUploadUI = false;
+  }
+
+  // ── Lightbox ──────────────────────────────────────────────────────────────
+  function openLightbox(src) {
+    document.getElementById('lightboxImg').src = src;
+    document.getElementById('lightbox').classList.add('open');
+  }
+  function closeLightbox() {
+    document.getElementById('lightbox').classList.remove('open');
   }
 
   // ── Utils ─────────────────────────────────────────────────────────────────
@@ -558,16 +404,11 @@
   }
 
   function escapeHtml(text) {
-    return (text || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return (text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   function scrollToBottom() {
-    setTimeout(() => {
-      chatArea.scrollTop = chatArea.scrollHeight;
-    }, 50);
+    setTimeout(() => { chatArea.scrollTop = chatArea.scrollHeight; }, 60);
   }
 
   function setWaiting(val) {
@@ -577,10 +418,7 @@
   }
 
   function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   }
 
   function autoResize(el) {
