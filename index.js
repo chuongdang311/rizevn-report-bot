@@ -20,9 +20,9 @@ app.get('/admin', (req, res) => {
 // Main chat endpoint
 app.post('/message', async (req, res) => {
   try {
-    const { sessionId, text, imageData } = req.body;
+    const { sessionId, text, images } = req.body;
     if (!sessionId) return res.status(400).json({ error: 'Missing sessionId' });
-    const result = await processMessage(sessionId, text, imageData);
+    const result = await processMessage(sessionId, text, images || []);
     res.json(result);
   } catch (err) {
     console.error('Error processing message:', err);
