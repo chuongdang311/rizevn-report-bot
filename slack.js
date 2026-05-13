@@ -1,4 +1,6 @@
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
 
 const SLACK_URL = process.env.SLACK_WEBHOOK_URL;
 
@@ -8,46 +10,92 @@ async function postToSlack(report) {
     return;
   }
 
-  const emoji = report.type === 'bug' ? '🐛' : '📋';
-  const typeLabel = report.type === 'bug' ? 'Bug Report' : 'Admin Request';
   const urgencyEmoji = report.urgency === 'Khẩn cấp' ? '🔴' : report.urgency === 'Trung bình' ? '🟡' : '🟢';
-  const imageNote = report.hasImage || report.imageData ? '\n📎 _Có ảnh đính kèm — xem trong báo cáo gốc_' : '';
+  const timestamp = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const imageCount = (report.images || []).length;
+  const imageNote = imageCount > 0 ? `📎 _${imageCount} ảnh đính kèm_` : '';
 
-  const text = `${emoji} *${typeLabel} — ${report.reportId}*
+  const blocks = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `📋 Báo cáo — ${report.reportId}`,
+        emoji: true
+      }
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*📧 Người báo cáo:*\n${report.email}` },
+        { type: 'mrkdwn', text: `*🏢 Tài khoản / PG:*\n${report.account}` },
+        { type: 'mrkdwn', text: `*${urgencyEmoji} Khẩn cấp:*\n${report.urgency}` },
+        { type: 'mrkdwn', text: `*🕐 Thời gian:*\n${timestamp}` }
+      ]
+    },
+    { type: 'divider' },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*📝 Mô tả vấn đề:*\n${report.details}`
+      }
+    }
+  ];
 
-👤 *Người báo cáo:* ${report.name}
-🏢 *Tài khoản/PG:* ${report.account}
-${urgencyEmoji} *Khẩn cấp:* ${report.urgency}
-🕐 *Thời gian:* ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}
+  // Add image note if present
+  if (imageNote) {
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: imageNote }]
+    });
+  }
 
-📝 *Mô tả:*
-${report.details}${imageNote}
+  // Footer
+  blocks.push({
+    type: 'context',
+    elements: [{
+      type: 'mrkdwn',
+      text: `Mã báo cáo: \`${report.reportId}\` • Rize Vietnam Bug Reporting Tool`
+    }]
+  });
 
-_Mã báo cáo: ${report.reportId}_`;
+  const payload = { blocks };
 
-  // Post the text report
   const response = await fetch(SLACK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
-    console.error('Slack webhook error:', response.status, await response.text());
-  }
-
-  // If there's an image, post it as a second message with the image URL
-  // (Slack incoming webhooks don't support file uploads directly)
-  // Image is stored on the server and referenced by report ID
-  if (report.imageData && SLACK_URL) {
-    const imageUrl = `${process.env.SERVER_URL || ''}/image/${report.reportId}`;
+    const errText = await response.text();
+    console.error('Slack webhook error:', response.status, errText);
+    // Fallback: plain text post
     await fetch(SLACK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: `📎 *Ảnh đính kèm cho ${report.reportId}:* ${imageUrl}`
+        text: `📋 *Báo cáo — ${report.reportId}*\n📧 ${report.email}\n🏢 ${report.account}\n${urgencyEmoji} ${report.urgency}\n📝 ${report.details}\n🕐 ${timestamp}`
       })
-    }).catch(e => console.error('Failed to post image link:', e));
+    });
+  }
+
+  // Save images to disk and post URLs as follow-up messages
+  if (report.images && report.images.length > 0) {
+    const imagesDir = path.join(__dirname, 'images');
+    if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+
+    report.images.forEach((imgData, i) => {
+      try {
+        const base64 = imgData.replace(/^data:image\/\w+;base64,/, '');
+        const ext = imgData.startsWith('data:image/png') ? 'png' : 'jpg';
+        const filename = `${report.reportId}-${i + 1}.${ext}`;
+        fs.writeFileSync(path.join(imagesDir, filename), base64, 'base64');
+      } catch (e) {
+        console.error(`Failed to save image ${i}:`, e.message);
+      }
+    });
   }
 }
 
