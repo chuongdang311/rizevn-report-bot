@@ -27,12 +27,16 @@ function slackHeaders() {
 async function uploadImagesToThread(channel, threadTs, images, reportId) {
   if (!images || images.length === 0 || !process.env.SLACK_BOT_TOKEN) return;
 
+  console.log(`[images] Uploading ${images.length} image(s) to thread ${threadTs}`);
+
   for (let i = 0; i < images.length; i++) {
     try {
       const imgData = images[i];
       const base64 = imgData.replace(/^data:image\/\w+;base64,/, '');
       const ext = imgData.startsWith('data:image/png') ? 'png' : 'jpg';
+      const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
       const buffer = Buffer.from(base64, 'base64');
+      console.log(`[images] Image ${i + 1}: ${ext}, ${buffer.length} bytes`);
 
       // Step 1: Request an upload URL from Slack
       const urlRes = await fetch(`${SLACK_API}/files.getUploadURLExternal`, {
@@ -45,20 +49,27 @@ async function uploadImagesToThread(channel, threadTs, images, reportId) {
         })
       });
       const urlData = await urlRes.json();
+      console.log(`[images] getUploadURL response:`, JSON.stringify(urlData));
 
       if (!urlData.ok) {
-        console.error(`Upload URL error (image ${i + 1}):`, urlData.error);
+        // missing_scope means files:write wasn't added to the Slack app
+        if (urlData.error === 'missing_scope') {
+          console.error('[images] ERROR: Bot token missing "files:write" scope. Go to api.slack.com/apps → OAuth & Permissions → add files:write → reinstall app.');
+        } else {
+          console.error(`[images] Upload URL error (image ${i + 1}):`, urlData.error);
+        }
         continue;
       }
 
-      // Step 2: Upload the binary to Slack's storage
-      await fetch(urlData.upload_url, {
+      // Step 2: Upload binary to Slack's presigned URL (no auth header needed here)
+      const uploadRes = await fetch(urlData.upload_url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers: { 'Content-Type': mimeType },
         body: buffer
       });
+      console.log(`[images] Upload step status: ${uploadRes.status}`);
 
-      // Step 3: Complete the upload and post into the thread
+      // Step 3: Complete the upload and share into the thread
       const completeRes = await fetch(`${SLACK_API}/files.completeUploadExternal`, {
         method: 'POST',
         headers: slackHeaders(),
@@ -69,11 +80,15 @@ async function uploadImagesToThread(channel, threadTs, images, reportId) {
         })
       });
       const completeData = await completeRes.json();
+      console.log(`[images] completeUpload response:`, JSON.stringify(completeData));
+
       if (!completeData.ok) {
-        console.error(`Complete upload error (image ${i + 1}):`, completeData.error);
+        console.error(`[images] Complete upload error (image ${i + 1}):`, completeData.error);
+      } else {
+        console.log(`[images] Image ${i + 1} uploaded successfully`);
       }
     } catch (e) {
-      console.error(`Image ${i + 1} upload failed:`, e.message);
+      console.error(`[images] Image ${i + 1} upload exception:`, e.message);
     }
   }
 }
