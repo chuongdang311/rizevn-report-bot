@@ -56,7 +56,10 @@ function getSession(sessionId) {
   const s = sessions[sessionId];
   if (!s.data.images) s.data.images = [];
   if (!s.history)     s.history     = [];
-  if (!s.state)       s.state       = 'collecting';
+  // Backward-compat: map any old step-based states to 'collecting'
+  if (!s.state || !['collecting','photo','email','confirm'].includes(s.state)) {
+    s.state = 'collecting';
+  }
   return s;
 }
 
@@ -77,22 +80,30 @@ function generateReportId() {
 }
 
 function buildSummary(data) {
-  const urgencyLabel = data.urgency === 'High' ? '🔴 High'
-    : data.urgency === 'Low' ? '🟢 Low' : '🟡 Medium';
+  const urgencyLabel = data.urgency === 'High' ? '🔴 Cao'
+    : data.urgency === 'Low' ? '🟢 Thấp' : '🟡 Trung bình';
   const photoNote = (data.images || []).length > 0
     ? `${data.images.length} ảnh đính kèm` : 'Không có ảnh';
   const stepsNote = data.steps
-    ? `\n\nSteps to reproduce:\n${data.steps}` : '';
+    ? `\n\n*Các bước tái hiện:*\n${data.steps}` : '';
+  const catVi = {
+    'App Bug':         'Lỗi ứng dụng',
+    'Farmer Data':     'Dữ liệu nông dân',
+    'AWD Task':        'AWD Task',
+    'Farmer-Zoho Sync':'Đồng bộ Zoho',
+    'Admin Request':   'Yêu cầu Admin',
+    'Integration':     'Tích hợp'
+  }[data.category] || (data.category || 'Lỗi ứng dụng');
 
   return (
     `*Xác nhận báo cáo:*\n\n` +
-    `[${data.category || 'App Bug'}] ${data.summary || (data.details || '').substring(0, 80)}\n\n` +
-    `Email:     ${data.email}\n` +
-    `PG/Farmer: ${data.account  || '—'}\n` +
-    `Platform:  ${data.platform || '—'}\n` +
-    `Urgency:   ${urgencyLabel}\n` +
-    `Images:    ${photoNote}\n\n` +
-    `Description:\n${data.details}` +
+    `[${catVi}] ${data.summary || (data.details || '').substring(0, 80)}\n\n` +
+    `*Email:*                  ${data.email}\n` +
+    `*PG / Nông dân:*          ${data.account  || '—'}\n` +
+    `*Nền tảng:*               ${data.platform || '—'}\n` +
+    `*Mức độ khẩn cấp:*        ${urgencyLabel}\n` +
+    `*Ảnh đính kèm:*           ${photoNote}\n\n` +
+    `*Mô tả vấn đề:*\n${data.details}` +
     `${stepsNote}\n\n` +
     `_Nhấn Gửi để gửi hoặc Bắt đầu lại để làm lại._`
   );
@@ -144,6 +155,7 @@ async function processMessage(sessionId, text, images) {
   // Route by state
   const { state } = session;
   if (state === 'collecting') return await handleCollecting(session, sessionId, text, images);
+  if (state === 'photo')      return await handlePhoto(session, sessionId, text);
   if (state === 'email')      return await handleEmail(session, sessionId, text);
   if (state === 'confirm')    return await handleConfirm(session, sessionId, text);
 
@@ -184,7 +196,7 @@ async function handleCollecting(session, sessionId, text, images) {
     const missing = [];
     if (!data.details)  missing.push('mô tả vấn đề');
     if (!data.account)  missing.push('tên PG hoặc nông dân');
-    if (!data.platform) missing.push('platform (iOS / Android / Web)');
+    if (!data.platform) missing.push('vấn đề xảy ra trên iOS, Android hay Zoho');
 
     const response = missing.length > 0
       ? `Bạn có thể cho tôi biết thêm: ${missing.join(', ')}?`
@@ -194,7 +206,7 @@ async function handleCollecting(session, sessionId, text, images) {
     persistSessions();
     return {
       messages:     [response],
-      quickReplies: !data.platform ? ['iOS', 'Android', 'Web'] : null
+      quickReplies: !data.platform ? ['iOS', 'Android', 'Zoho'] : null
     };
   }
 
@@ -221,19 +233,46 @@ async function handleCollecting(session, sessionId, text, images) {
 
   persistSessions();
 
-  // ── Transition to email collection when Claude says all fields ready ──
+  // ── All required fields collected — ask for photo first if none yet ──
   if (result.readyToConfirm) {
+    if (!data.images || data.images.length === 0) {
+      // Ask for screenshot before email
+      session.state = 'photo';
+      persistSessions();
+      const transition = result.response ? result.response + '\n\n' : '';
+      return {
+        messages:     [`${transition}Bạn có ảnh chụp màn hình nào muốn đính kèm không? Ảnh sẽ giúp kỹ thuật hiểu rõ hơn.`],
+        quickReplies: ['⏭️ Bỏ qua'],
+        showUpload:   true
+      };
+    }
+    // Already have images — go straight to email
     session.state = 'email';
     persistSessions();
-    // Claude's response already asks for email naturally
+    const imgNote = `Đã nhận ${data.images.length} ảnh chụp màn hình.\n\n`;
     return {
-      messages: [result.response || 'Cảm ơn! Cuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)']
+      messages: [`${imgNote}Cuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)`]
     };
   }
 
   return {
     messages:     [result.response || 'Bạn có thể mô tả thêm không?'],
     quickReplies: result.quickReplies || null
+  };
+}
+
+// ── STATE: photo ─────────────────────────────────────────────────────────
+// Images are captured at the top of processMessage regardless of state,
+// so by the time we get here the images array is already updated.
+async function handlePhoto(session, sessionId, text) {
+  // Move on whether they attached images or clicked Skip
+  session.state = 'email';
+  persistSessions();
+
+  const n = (session.data.images || []).length;
+  const imgNote = n > 0 ? `Đã nhận ${n} ảnh chụp màn hình! 📸\n\n` : '';
+  return {
+    messages: [`${imgNote}Cuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)`]
   };
 }
 
