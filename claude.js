@@ -274,14 +274,17 @@ YOUR TASKS:
    - Use Rize-context examples (PG names, features) to guide them.
    - If urgency not mentioned, do NOT ask — default to Medium.
    - Steps are optional: only ask if the description gives no clue how the issue happened.
-5. When ALL required fields are collected set readyToConfirm=true and ask for their work email.
+   - When asking about platform, phrase it as: "vấn đề này xảy ra trên iOS, Android, hay Zoho?" (not "bạn dùng thiết bị gì")
+5. When ALL required fields are collected set readyToConfirm=true. Your response should simply confirm you have enough information (e.g. "Cảm ơn, tôi đã có đủ thông tin rồi!"). Do NOT ask for email — the system handles that next.
+
+PLATFORM OPTIONS: iOS (mobile iPhone), Android (mobile Android), Zoho (web-based Zoho platform)
 
 Return ONLY valid JSON (no markdown fences):
 {
   "updates": {
     "details":  "full description if new/better text found in this message, else null",
     "account":  "extracted PG/FG/farmer name or null",
-    "platform": "iOS|Android|Web or null",
+    "platform": "iOS|Android|Zoho or null",
     "urgency":  "High|Medium|Low or null",
     "steps":    "reproduction steps text or null",
     "category": "category string or null",
@@ -289,7 +292,7 @@ Return ONLY valid JSON (no markdown fences):
   },
   "readyToConfirm": false,
   "response": "Your Vietnamese message to the user",
-  "quickReplies": ["iOS", "Android", "Web"] or null
+  "quickReplies": ["iOS", "Android", "Zoho"] or null
 }`, 800);
 
   const fallback = {
