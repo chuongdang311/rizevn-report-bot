@@ -158,7 +158,17 @@ async function handleStep(session, sessionId, text) {
   // ── STEP: ask_reproduce ───────────────────────────────────────────────────
   if (step === 'ask_reproduce') {
     const skipped = !text || ['bỏ qua', 'skip', '⏭️ bỏ qua'].includes(text.toLowerCase().trim());
-    data.steps = skipped ? '' : text.trim();
+    if (!skipped && text && text.trim().length > 3) {
+      // Use Claude to convert natural description into structured steps
+      try {
+        const { generateSteps } = require('./claude');
+        data.steps = await generateSteps(text.trim(), data.details || '');
+      } catch (e) {
+        data.steps = text.trim(); // fallback: keep raw text
+      }
+    } else {
+      data.steps = '';
+    }
     data.stepsAnswered = true;
     return await nextStep(session, sessionId, data);
   }
@@ -249,7 +259,7 @@ async function nextStep(session, sessionId, data) {
     session.step = 'ask_reproduce';
     persistSessions();
     return {
-      messages: ['Các bước để tái hiện vấn đề? Nhập từng bước trên từng dòng.\n_Ví dụ:\n1. Mở ứng dụng\n2. Vào mục Quotes\n3. ..._'],
+      messages: ['Bạn có thể kể lại cách bạn gặp phải vấn đề này không? Không cần liệt kê từng bước — chỉ cần mô tả những gì bạn đang làm khi sự cố xảy ra.\n\n_Ví dụ: "Tôi vào màn hình APD trong nhóm PG ABC, tôi nhập số liệu cho nông dân thì ứng dụng báo lỗi và không lưu được."_'],
       quickReplies: ['⏭️ Bỏ qua']
     };
   }
