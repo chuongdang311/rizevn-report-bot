@@ -60,14 +60,19 @@ async function uploadMediaToThread(channel, threadTs, images, reportId) {
       console.log(`[media] File ${i + 1}: ${kind}/${ext}, ${buffer.length} bytes`);
 
       // Step 1: Request an upload URL from Slack
+      // NOTE: files.getUploadURLExternal requires form-encoded body, NOT JSON
+      const uploadParams = new URLSearchParams({
+        filename: `${reportId}-attachment-${i + 1}.${ext}`,
+        length:   String(buffer.length),
+        alt_txt:  `Attachment ${i + 1}`
+      });
       const urlRes = await fetch(`${SLACK_API}/files.getUploadURLExternal`, {
-        method: 'POST',
-        headers: slackHeaders(),
-        body: JSON.stringify({
-          filename: `${reportId}-attachment-${i + 1}.${ext}`,
-          length:   buffer.length,
-          alt_txt:  `Attachment ${i + 1}`
-        })
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/x-www-form-urlencoded',
+          'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`
+        },
+        body: uploadParams.toString()
       });
       const urlData = await urlRes.json();
       console.log(`[media] getUploadURL response:`, JSON.stringify(urlData));
