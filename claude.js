@@ -1,11 +1,14 @@
 /**
  * Claude API helpers for the Rize Report Bot
  *
- * Functions:
- *  1. analyzeDescription  — quality check + category + vagueness detection
- *  2. detectAccountFromText — extract PG/farmer/group name from free-form text
- *  3. generateSteps       — convert natural description → numbered steps
- *  4. elaborateReport     — produce English heading + detailed description for Slack
+ * Primary function (full-conversation mode):
+ *   conductConversation  — system-prompt-driven conversation relay
+ *
+ * Supporting functions (used at submission time):
+ *   elaborateReport      — polish heading + description into English for Slack
+ *
+ * Legacy helpers (kept for potential future use):
+ *   analyzeDescription, detectAccountFromText, generateSteps
  */
 
 let client = null;
@@ -17,6 +20,161 @@ function getClient() {
   }
   return client;
 }
+
+// ── System prompt — the "skill" that drives the entire conversation ────────
+//
+// This is the single source of truth for how Claude behaves as a bug-report
+// assistant. Changing behaviour = editing this prompt, not touching bot logic.
+
+const SYSTEM_PROMPT = `
+You are the Rize Vietnam Bug Report Assistant — a warm, bilingual chatbot embedded in Rize's internal reporting tool. Your sole job is to collect all required information to file a complete, well-documented bug report, then emit a structured completion signal for the system to process.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LANGUAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Always respond in Vietnamese. Keep the following in their original form — do not translate:
+- English technical terms: AWD, APD, KYC, Zoho, iOS, Android
+- Rize system names: Quotes, Farmer Group, Planting Group, PG, FG
+- All proper names: PG names, FG names, farmer names, place names
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WHO YOU'RE TALKING TO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Agronomists (AGs) at Rize Vietnam. They may write in Vietnamese, English, or a mix. They are field-level staff who are familiar with Rize's app and operations but may not describe bugs in technical detail.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RIZE APP — FEATURES AND CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- KYC: farmer identity verification and onboarding flow
+- AWD (Alternate Wetting and Drying): water management tasks assigned to AGs
+- APD Input: water level / pipe data entry linked to AWD tasks
+- Pipe Installation: recording pipe placement for AWD monitoring
+- Quotes: ordering agri-inputs (fertiliser, pesticide, seed) for farmers
+- Farmer Group Management: creating and managing Planting Groups and Farmer Groups
+- Delivery Tracking: tracking agri-input delivery status
+- Invoice Upload: submitting delivery invoices with photo proof
+- Zoho Sync: syncing farmer profile and group data to Zoho CRM
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BUG CATEGORIES — pick exactly one
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- "App Bug"          : crashes, UI errors, features not loading, wrong data displayed, upload failures
+- "Farmer Data"      : KYC not completing, farmer profile update issues, onboarding data errors
+- "AWD Task"         : APD input errors, pipe installation bugs, water level recording issues
+- "Farmer-Zoho Sync" : farmer exists in app but missing or wrong in Zoho, sync mismatches
+- "Admin Request"    : bulk data corrections, manual overrides, admin-level actions needed
+- "Integration"      : third-party API failures, webhook issues, external system connections
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIELDS TO COLLECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REQUIRED — do not emit the completion signal until all three are present:
+
+1. DESCRIPTION
+   What is the issue? Must include at minimum:
+   - The specific feature or screen affected (e.g. AWD > APD Input, KYC screen, Quotes)
+   - What went wrong (error message shown, data incorrect, action failed, sync missing)
+   A list of affected PG or farmer names is sufficient description of scope on its own.
+   Accept the description as sufficient after one follow-up at most — do not interrogate indefinitely.
+
+2. ACCOUNT
+   The Planting Group (PG), Farmer Group (FG), cooperative, or individual farmer involved.
+   See naming conventions below. Extract from what the user writes — do not ask if it was
+   already mentioned anywhere in the conversation.
+
+3. PLATFORM
+   Where the issue occurs: iOS, Android, or Zoho.
+
+OPTIONAL — record if the AG mentions them naturally, do not ask:
+
+- URGENCY  : High / Medium / Low. Default Medium. Trigger words: "urgent", "gấp", "khẩn", "critical", "nghiêm trọng".
+- STEPS    : How the AG encountered the issue. Only ask if the description gives zero context on how the issue occurred.
+
+NEVER ask for:
+- Email — the interface handles this separately
+- Screenshots / attachments — the interface handles these separately
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RIZE NAMING CONVENTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Extract account names EXACTLY as the user writes them. Never normalise, reformat, or abbreviate.
+
+Planting Groups — with "PG" prefix:
+  "PG Châu Thành", "PG An Giang 1", "PG Vinh Hoa", "PG Vĩnh Hạnh"
+
+Planting Groups — underscore format (no prefix):
+  "AnGiang_VinhTrach_Sale", "Vinh Loi_Vinh Hang_Chau Thanh_An Giang",
+  "KENH 11_CAU CHU S2", "7_VINH TRE2", "Lat_Seed (AG 1.1)", "AG(01)"
+
+Farmer / Cooperative Groups:
+  "FG-001", "Bayer Forward Farm_CHAU PHU_AN GIANG",
+  "Coop_Hoa Binh_Bac Lieu", "Vinh Cuong Coop_HB_BL"
+
+Individual farmer names — unaccented Vietnamese 2–3 words:
+  "Nguyen Van Y Bang", "Tran Cong Qui", "Ho Minh Tri", "Cao Lap Duc"
+
+ACCOUNT EXTRACTION RULES — apply silently before asking the AG:
+- "nông dân của [X]"              → account = X
+- "farmers of [X]" / "in [X]"    → account = X
+- "trong nhóm [X]" / "thuộc [X]" → account = X
+- Any underscore-separated location string (A_B_C or A_B_C_D) is a valid PG name — extract verbatim
+- If the user lists multiple PG or farmer names, include ALL of them as the account value
+- If a name was given anywhere earlier in the conversation, do NOT ask for it again
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HOW TO CONDUCT THE CONVERSATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Be warm and conversational — like a helpful colleague, not a form
+- Acknowledge what the AG has shared before asking for more
+- Ask for at most 1–2 missing things at a time, phrased as a single natural question
+- Never list fields robotically ("Tôi còn cần: 1. platform 2. account...")
+- When asking about platform, say: "vấn đề này xảy ra trên iOS, Android, hay Zoho?"
+  — never ask "bạn đang dùng thiết bị gì?"
+- If the user seems confused or gives a vague answer, ask one specific follow-up question
+  with a concrete example drawn from Rize context
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRESERVE THE USER'S EXACT WORDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is critical. When the AG describes the problem or lists affected names, copy their
+exact text into the completion JSON. Do not summarise, paraphrase, or shorten. If they
+paste 8 PG names, all 8 must appear verbatim in the "details" field of the completion signal.
+When building "details", concatenate all relevant messages the AG sent across the conversation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK REPLY BUTTONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When asking a question that has a small fixed set of short answers, append this signal
+on a new line at the very end of your response (the interface strips it and renders buttons):
+
+  [QR:option1,option2,option3]
+
+Use only for platform questions: [QR:iOS,Android,Zoho]
+Do not use for open-ended questions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETION SIGNAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When you have collected a sufficient description, account, and platform:
+
+1. Write your final Vietnamese confirmation message to the user (e.g. "Cảm ơn, mình đã có đủ thông tin rồi!").
+2. On a new line, output EXACTLY:
+
+[REPORT_READY]
+{"details":"<exact AG description, all relevant messages concatenated>","account":"<exact name(s) as written>","platform":"iOS|Android|Zoho","urgency":"High|Medium|Low","steps":"<steps text or empty string>","category":"<one of the six categories>","summary":"<8–10 word English phrase describing the core issue>"}
+
+Rules for the completion JSON:
+- "details"  : the AG's description verbatim across all their messages — never summarised
+- "account"  : exact name(s) as the AG wrote them — never generated or inferred differently
+- "urgency"  : "Medium" if never mentioned
+- "steps"    : "" (empty string) if not provided
+- "summary"  : English only, 8–10 words, technical and specific
+- The JSON must be valid, on a single line, immediately after [REPORT_READY]
+- Do not add any text after the JSON block
+`.trim();
+
+// ── Shared low-level caller ───────────────────────────────────────────────
 
 async function callClaude(prompt, maxTokens = 600) {
   const c = getClient();
@@ -34,135 +192,33 @@ async function callClaude(prompt, maxTokens = 600) {
   }
 }
 
-// ── 1. Analyze description quality + detect category ──────────────────────
+// ── Primary: system-prompt-driven conversation ────────────────────────────
+//
+// messageHistory must be an array of proper API message objects:
+//   [{ role: 'user', content: '...' }, { role: 'assistant', content: '...' }, ...]
+//
+// Returns Claude's raw text response (may contain [REPORT_READY] signal).
+// Returns null if Claude is unavailable.
 
-async function analyzeDescription(description) {
-  const words = description.trim().split(/\s+/).length;
-  const heuristicDetailed = words >= 20;
-  const fallback = {
-    is_detailed: heuristicDetailed,
-    follow_up: heuristicDetailed
-      ? null
-      : 'Bạn có thể mô tả chi tiết hơn không? Màn hình nào, tính năng nào đang gặp vấn đề, và lỗi cụ thể là gì?',
-    category: 'App Bug',
-    summary: description.split(/[.!?\n]/)[0].trim().substring(0, 100)
-  };
-
-  const raw = await callClaude(`You analyze bug/issue reports for Rize, a Vietnamese agri-tech company.
-
-Rize Mobile App features: KYC farmer onboarding, AWD water tasks, APD input, pipe installation, Quotes/agri input ordering, Farmer Group management, delivery tracking, invoice upload, Zoho sync.
-
-The reporter writes in Vietnamese, English, or mixed.
-
-Analyze the description and return ONLY valid JSON (no markdown fences):
-{
-  "is_detailed": boolean,
-  "follow_up": "ONE specific Vietnamese follow-up question to get the missing info, or null if already detailed",
-  "category": one of: "App Bug" | "Farmer Data" | "AWD Task" | "Farmer-Zoho Sync" | "Admin Request" | "Integration",
-  "summary": "concise 8-10 word English phrase describing the core issue"
-}
-
-Category guide:
-- "App Bug": crashes, UI errors, features not loading, wrong data displayed, upload failures
-- "Farmer Data": KYC not completing, farmer profile update issues, onboarding data errors
-- "AWD Task": APD input errors, pipe installation issues, water level recording, AWD-related bugs
-- "Farmer-Zoho Sync": farmer exists in app but missing/wrong in Zoho, sync mismatches
-- "Admin Request": bulk data corrections, manual overrides, admin-level actions needed
-- "Integration": third-party API failures, webhook issues, external system connections
-
-is_detailed = FALSE (must ask follow-up) if ANY of these:
-- Only mentions an action without context: "open the task", "click the button", "it doesn't work"
-- No specific screen, feature, or workflow mentioned
-- No error message or observable outcome described
-- Single vague sentence with no specifics
-- Could describe many different unrelated bugs
-
-is_detailed = TRUE if:
-- Mentions a specific screen, section, or feature name
-- Describes what happened (error shown, action failed, data wrong)
-- Has enough context for a developer to understand and reproduce
-
-Description: "${description}"`);
-
-  if (!raw) return fallback;
+async function conductConversation(messageHistory) {
+  const c = getClient();
+  if (!c) return null;
   try {
-    const parsed = JSON.parse(raw);
-    return {
-      is_detailed: !!parsed.is_detailed,
-      follow_up: parsed.follow_up || null,
-      category: parsed.category || 'App Bug',
-      summary: parsed.summary || fallback.summary
-    };
+    const msg = await c.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1200,
+      system: SYSTEM_PROMPT,
+      messages: messageHistory
+    });
+    return msg.content[0]?.text || null;
   } catch (e) {
-    return fallback;
-  }
-}
-
-// ── 2. Extract PG / farmer / group name from free-form text ───────────────
-// Returns the name string, or null if no clear entity name found.
-
-async function detectAccountFromText(text) {
-  if (!text || text.trim().length < 3) return null;
-
-  const raw = await callClaude(`You are reading a bug report written in Vietnamese or English by an agronomist at Rize Vietnam.
-
-Text: "${text}"
-
-Task: Extract the name of the Planting Group (PG/Nhóm Trồng Trọt), Farmer Group (Nhóm Nông Dân), or individual Farmer mentioned.
-
-Naming conventions at Rize Vietnam:
-- Planting Group: starts with "PG" followed by a location name, e.g. "PG Châu Thành", "PG An Giang 1", "PG Vĩnh Hòa"
-- Farmer Group: may start with "FG", "Nhóm", or just a location/number, e.g. "FG-001", "Nhóm Bắc Giang 2"
-- Farmer names: Vietnamese full names, typically 2-3 words, e.g. "Nguyễn Văn An", "Trần Thị Lan", "Lê Văn Bình"
-- Location names in Vietnam: An Giang, Cần Thơ, Đồng Tháp, Long An, Tiền Giang, Vĩnh Long, Bến Tre, Kiên Giang, Hậu Giang, Sóc Trăng, Bạc Liêu, Châu Thành, Vĩnh Hòa, Vĩnh Hạnh, etc.
-
-Return ONLY a JSON object:
-{
-  "found": boolean,
-  "name": "the extracted name, or null"
-}
-
-Return found=false if:
-- The text only describes a problem without naming a specific PG/FG/farmer
-- No clear entity name can be identified
-- The mention is generic (e.g. "all farmers", "a farmer group") without a specific name`, 200);
-
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed.found && parsed.name ? parsed.name : null;
-  } catch (e) {
+    console.error('[claude] conductConversation error:', e.message);
     return null;
   }
 }
 
-// ── 3. Generate structured steps from natural description ─────────────────
-
-async function generateSteps(howDescription, issueContext) {
-  const raw = await callClaude(`Convert the following natural language description into clear numbered steps to reproduce a bug. Write in English only.
-
-Issue context: "${issueContext}"
-How they described it: "${howDescription}"
-
-Rules:
-- Number each step (1. 2. 3.)
-- Focus on: which screen/section, what action, what happened
-- Add "Expected:" at the end if the expected behaviour is clear
-- Max 5-6 steps, each step concise
-- Return ONLY the numbered steps, no intro text
-
-Example:
-1. Open the app and navigate to AWD > APD Input
-2. Select Planting Group "PG Châu Thành"
-3. Enter APD value for the farmer
-4. Tap Save — app shows error and does not save
-Expected: APD value saves successfully`, 350);
-
-  return raw || howDescription;
-}
-
-// ── 4. Elaborate report for Slack ─────────────────────────────────────────
-// Returns { heading, description, account, steps } — all in English except proper nouns.
+// ── Elaborate report for Slack (called at submission time) ────────────────
+// Returns { heading, description, account, steps } — all in English.
 
 async function elaborateReport(report) {
   const raw = await callClaude(`You are preparing a professional bug report for Rize Vietnam's engineering team in Slack.
@@ -187,17 +243,16 @@ CRITICAL RULES:
 - Vietnamese proper nouns (people names, place names, PG names) stay as-is`, 700);
 
   const fallback = {
-    heading: report.summary || (report.details || '').split(/[.!?\n]/)[0].trim().substring(0, 80) || 'Issue reported',
+    heading:     report.summary || (report.details || '').split(/[.!?\n]/)[0].trim().substring(0, 80) || 'Issue reported',
     description: report.details || '',
-    account: report.account || 'Not specified',
-    steps: report.steps || ''
+    account:     report.account || 'Not specified',
+    steps:       report.steps   || ''
   };
 
   if (!raw) return fallback;
   try {
-    // Strip potential markdown fences Claude might add despite instructions
     const cleaned = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const parsed  = JSON.parse(cleaned);
     return {
       heading:     parsed.heading     || fallback.heading,
       description: parsed.description || fallback.description,
@@ -209,113 +264,27 @@ CRITICAL RULES:
   }
 }
 
-// ── 5. Claude-driven conversation orchestration ───────────────────────────
-// Analyzes each user message, extracts all available fields, and generates
-// a natural Vietnamese response asking for whatever is still missing.
-//
-// Returns:
-//   { updates, readyToConfirm, response, quickReplies }
+// ── Legacy helpers (kept for reference) ──────────────────────────────────
 
-async function analyzeAndCollect(history, currentData, newMessage) {
-  const collected = {
-    description: currentData.details  || null,
-    account:     currentData.account  || null,
-    platform:    currentData.platform || null,
-    urgency:     currentData.urgency  || null,
-    steps:       currentData.steps    || null
+async function analyzeDescription(description) {
+  const words = description.trim().split(/\s+/).length;
+  return {
+    is_detailed: words >= 15,
+    follow_up:   words >= 15 ? null : 'Bạn có thể mô tả chi tiết hơn không?',
+    category:    'App Bug',
+    summary:     description.split(/[.!?\n]/)[0].trim().substring(0, 100)
   };
-
-  // Include only the most recent 8 exchanges so the prompt stays compact
-  const recentHistory = (history || []).slice(-8);
-  const historyText = recentHistory
-    .map(h => `${h.role === 'user' ? 'AG' : 'Bot'}: ${h.text}`)
-    .join('\n');
-
-  const raw = await callClaude(`You are the Rize Vietnam bug-report assistant bot. Agronomists (AGs) submit bug reports in Vietnamese or English.
-
-FIELDS COLLECTED SO FAR:
-- Description: ${collected.description ? `"${collected.description.substring(0, 300)}"` : '(none)'}
-- PG / Account: ${collected.account  || '(none)'}
-- Platform:     ${collected.platform || '(none)'}
-- Urgency:      ${collected.urgency  || '(none — will default to Medium if never mentioned)'}
-- Steps:        ${collected.steps    || '(none)'}
-
-CONVERSATION SO FAR:
-${historyText}
-
-LATEST USER MESSAGE: "${newMessage}"
-
-RIZE VIETNAM NAMING CONVENTIONS:
-- Planting Groups: start with "PG" or follow [Province_Location_Tag] format
-  e.g. "PG Châu Thành", "PG An Giang 1", "AnGiang_VinhTrach_Sale", "KENH 11_CAU CHU S2", "Lat_Seed (AG 1.1)"
-- Farmer Groups: "FG-001", "Bayer Forward Farm_CHAU PHU_AN GIANG", "Coop_Hoa Binh_Bac Lieu"
-- Farmer names: unaccented Vietnamese 2-3 words e.g. "Nguyen Van Y Bang", "Tran Cong Qui"
-- Provinces: An Giang, Thoai Son, Cho Moi, Tri Ton, Bac Lieu, Chau Phu, Can Tho, Dong Thap, etc.
-
-APP FEATURES: KYC farmer onboarding, AWD water tasks, APD input, pipe installation, Quotes / agri-input ordering, Farmer Group management, delivery tracking, invoice upload, Zoho sync.
-
-CATEGORIES:
-- "App Bug": crashes, UI errors, features not loading, wrong data displayed, upload failures
-- "Farmer Data": KYC not completing, farmer profile issues, onboarding data errors
-- "AWD Task": APD input errors, pipe installation, water level recording
-- "Farmer-Zoho Sync": farmer missing or wrong in Zoho, sync mismatches
-- "Admin Request": bulk corrections, manual overrides, admin-level actions
-- "Integration": third-party API failures, webhooks, external system connections
-
-YOUR TASKS:
-1. Extract any field values present in the LATEST USER MESSAGE.
-2. Decide if the description is sufficient:
-   SUFFICIENT = mentions a specific screen/feature AND describes what went wrong (error shown, data wrong, action failed).
-   NOT SUFFICIENT = only says "it doesn't work", "open the task", no screen/feature named.
-3. Identify which REQUIRED fields are still missing: description (sufficient), account, platform.
-4. Write a warm, conversational Vietnamese response:
-   - Acknowledge what they've shared.
-   - Ask naturally for 1-2 missing things in one sentence (don't list robotically).
-   - Use Rize-context examples (PG names, features) to guide them.
-   - If urgency not mentioned, do NOT ask — default to Medium.
-   - Steps are optional: only ask if the description gives no clue how the issue happened.
-   - When asking about platform, phrase it as: "vấn đề này xảy ra trên iOS, Android, hay Zoho?" (not "bạn dùng thiết bị gì")
-5. When ALL required fields are collected set readyToConfirm=true. Your response should simply confirm you have enough information (e.g. "Cảm ơn, tôi đã có đủ thông tin rồi!"). Do NOT ask for email — the system handles that next.
-
-PLATFORM OPTIONS: iOS (mobile iPhone), Android (mobile Android), Zoho (web-based Zoho platform)
-
-Return ONLY valid JSON (no markdown fences):
-{
-  "updates": {
-    "details":  "full description if new/better text found in this message, else null",
-    "account":  "extracted PG/FG/farmer name or null",
-    "platform": "iOS|Android|Zoho or null",
-    "urgency":  "High|Medium|Low or null",
-    "steps":    "reproduction steps text or null",
-    "category": "category string or null",
-    "summary":  "8-10 word English phrase describing the core issue, or null"
-  },
-  "readyToConfirm": false,
-  "response": "Your Vietnamese message to the user",
-  "quickReplies": ["iOS", "Android", "Zoho"] or null
-}`, 800);
-
-  const fallback = {
-    updates:        {},
-    readyToConfirm: false,
-    response:       'Bạn có thể mô tả thêm không? Màn hình nào đang gặp vấn đề, và điều gì cụ thể đã xảy ra?',
-    quickReplies:   null
-  };
-
-  if (!raw) return fallback;
-  try {
-    const cleaned = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const parsed  = JSON.parse(cleaned);
-    return {
-      updates:        parsed.updates        || {},
-      readyToConfirm: !!parsed.readyToConfirm,
-      response:       parsed.response       || fallback.response,
-      quickReplies:   Array.isArray(parsed.quickReplies) ? parsed.quickReplies : null
-    };
-  } catch (e) {
-    console.error('[claude] analyzeAndCollect parse error:', e.message, '| raw excerpt:', raw?.substring(0, 200));
-    return fallback;
-  }
 }
 
-module.exports = { analyzeDescription, detectAccountFromText, generateSteps, elaborateReport, analyzeAndCollect };
+async function detectAccountFromText(text) { return null; }
+async function generateSteps(desc) { return desc; }
+
+module.exports = {
+  conductConversation,
+  elaborateReport,
+  // legacy
+  analyzeDescription,
+  detectAccountFromText,
+  generateSteps,
+  SYSTEM_PROMPT
+};
