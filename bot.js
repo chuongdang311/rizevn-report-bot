@@ -1,21 +1,24 @@
 /**
- * bot.js — Claude-driven conversational flow
+ * bot.js — thin relay layer around Claude's system-prompt-driven conversation
  *
- * States:
- *   collecting  — Claude analyzes each message, extracts fields, asks naturally
- *   email       — simple validated email collection
- *   confirm     — show summary, wait for send / restart
+ * Claude (via conductConversation) owns the entire collecting conversation.
+ * This file owns only what must be programmatic:
+ *   - Session persistence
+ *   - Image capture (base64 never goes to Claude)
+ *   - Parsing Claude's [REPORT_READY] completion signal
+ *   - Photo prompt (if no images attached)
+ *   - Email validation
+ *   - Confirmation summary (Vietnamese)
+ *   - Slack posting + report ID generation
  *
- * Required fields: details (sufficient quality), account, platform
- * Optional:        urgency (defaults Medium), steps
- * Final:           email (validated format)
+ * States: collecting → photo → email → confirm
  */
 
 const fs   = require('fs');
 const path = require('path');
-const { postToSlack }            = require('./slack');
+const { postToSlack }                     = require('./slack');
 const { saveReport, getReport, updateStatus } = require('./store');
-const { analyzeAndCollect }      = require('./claude');
+const { conductConversation }             = require('./claude');
 
 // ── Session persistence ───────────────────────────────────────────────────
 const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
@@ -27,20 +30,28 @@ try {
     Object.entries(raw).forEach(([k, v]) => {
       sessions[k] = {
         state:   v.state   || 'collecting',
-        data:    { ...v.data, images: [] },   // never persist base64
-        history: v.history || []
+        data:    { ...v.data, images: [] },
+        history: migrateHistory(v.history || [])
       };
     });
   }
 } catch (e) { sessions = {}; }
+
+// Migrate old {role, text} format → proper API {role, content} format
+function migrateHistory(history) {
+  return history.map(h => ({
+    role:    h.role === 'bot' ? 'assistant' : (h.role || 'user'),
+    content: h.content || h.text || ''
+  }));
+}
 
 function persistSessions() {
   const toSave = {};
   Object.entries(sessions).forEach(([k, v]) => {
     toSave[k] = {
       state:   v.state,
-      data:    { ...v.data, images: [] },
-      history: (v.history || []).slice(-12)   // keep last 12 turns
+      data:    { ...v.data, images: [] },   // never persist base64 images
+      history: (v.history || []).slice(-20) // keep last 20 turns
     };
   });
   try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(toSave, null, 2)); } catch (e) {}
@@ -49,26 +60,24 @@ function persistSessions() {
 // ── Helpers ───────────────────────────────────────────────────────────────
 const REPORT_ID_PATTERN = /^\d{8}-RPT-\d{3}$/;
 
+const VALID_STATES = ['collecting', 'photo', 'email', 'confirm'];
+
 function getSession(sessionId) {
   if (!sessions[sessionId]) {
     sessions[sessionId] = { state: 'collecting', data: { images: [] }, history: [] };
   }
   const s = sessions[sessionId];
-  if (!s.data.images) s.data.images = [];
-  if (!s.history)     s.history     = [];
-  // Backward-compat: map any old step-based states to 'collecting'
-  if (!s.state || !['collecting','photo','email','confirm'].includes(s.state)) {
-    s.state = 'collecting';
-  }
+  if (!s.data.images)              s.data.images = [];
+  if (!s.history)                  s.history     = [];
+  if (!VALID_STATES.includes(s.state)) s.state   = 'collecting';
   return s;
 }
 
 function greetMessage() {
   return (
     'Xin chào! 👋 Tôi là bot báo cáo lỗi của Rize Vietnam.\n\n' +
-    'Bạn đang gặp vấn đề gì? Hãy mô tả tự nhiên — bao gồm màn hình nào, ' +
-    'PG / nhóm nông dân liên quan, và điều gì đã xảy ra. ' +
-    'Tôi sẽ hỏi thêm nếu cần.\n\n' +
+    'Bạn đang gặp vấn đề gì? Hãy mô tả tự nhiên — ' +
+    'bao gồm màn hình nào, PG / nhóm nông dân liên quan, và điều gì đã xảy ra.\n\n' +
     '📎 Bạn có thể đính kèm ảnh chụp màn hình bất cứ lúc nào.'
   );
 }
@@ -79,30 +88,63 @@ function generateReportId() {
   return `${date}-RPT-${suffix}`;
 }
 
+// Parse [REPORT_READY] signal from Claude's response.
+// Returns extracted data object or null.
+function parseCompletionSignal(text) {
+  const marker = '[REPORT_READY]';
+  const idx    = text.indexOf(marker);
+  if (idx === -1) return null;
+
+  const jsonStr = text.substring(idx + marker.length).trim();
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    console.error('[bot] Failed to parse REPORT_READY JSON:', e.message, '| snippet:', jsonStr.substring(0, 120));
+    return null;
+  }
+}
+
+// Parse [QR:a,b,c] quick-reply signal.
+// Returns array of strings or null.
+function parseQuickReplies(text) {
+  const match = text.match(/\[QR:([^\]]+)\]/);
+  if (!match) return null;
+  return match[1].split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// Strip all bot signals from the display text.
+function stripSignals(text) {
+  return text
+    .replace(/\[REPORT_READY\][\s\S]*/g, '') // everything from signal onwards
+    .replace(/\[QR:[^\]]*\]/g, '')           // quick-reply markers
+    .trim();
+}
+
+// Build the Vietnamese confirmation summary shown to the user before submit.
 function buildSummary(data) {
   const urgencyLabel = data.urgency === 'High' ? '🔴 Cao'
-    : data.urgency === 'Low' ? '🟢 Thấp' : '🟡 Trung bình';
+    : data.urgency   === 'Low'  ? '🟢 Thấp' : '🟡 Trung bình';
   const photoNote = (data.images || []).length > 0
     ? `${data.images.length} ảnh đính kèm` : 'Không có ảnh';
   const stepsNote = data.steps
     ? `\n\n*Các bước tái hiện:*\n${data.steps}` : '';
   const catVi = {
-    'App Bug':         'Lỗi ứng dụng',
-    'Farmer Data':     'Dữ liệu nông dân',
-    'AWD Task':        'AWD Task',
-    'Farmer-Zoho Sync':'Đồng bộ Zoho',
-    'Admin Request':   'Yêu cầu Admin',
-    'Integration':     'Tích hợp'
+    'App Bug':          'Lỗi ứng dụng',
+    'Farmer Data':      'Dữ liệu nông dân',
+    'AWD Task':         'AWD Task',
+    'Farmer-Zoho Sync': 'Đồng bộ Zoho',
+    'Admin Request':    'Yêu cầu Admin',
+    'Integration':      'Tích hợp'
   }[data.category] || (data.category || 'Lỗi ứng dụng');
 
   return (
     `*Xác nhận báo cáo:*\n\n` +
     `[${catVi}] ${data.summary || (data.details || '').substring(0, 80)}\n\n` +
-    `*Email:*                  ${data.email}\n` +
-    `*PG / Nông dân:*          ${data.account  || '—'}\n` +
-    `*Nền tảng:*               ${data.platform || '—'}\n` +
-    `*Mức độ khẩn cấp:*        ${urgencyLabel}\n` +
-    `*Ảnh đính kèm:*           ${photoNote}\n\n` +
+    `*Email:*               ${data.email}\n` +
+    `*PG / Nông dân:*       ${data.account  || '—'}\n` +
+    `*Nền tảng:*            ${data.platform || '—'}\n` +
+    `*Mức độ khẩn cấp:*     ${urgencyLabel}\n` +
+    `*Ảnh đính kèm:*        ${photoNote}\n\n` +
     `*Mô tả vấn đề:*\n${data.details}` +
     `${stepsNote}\n\n` +
     `_Nhấn Gửi để gửi hoặc Bắt đầu lại để làm lại._`
@@ -113,25 +155,25 @@ function buildSummary(data) {
 async function processMessage(sessionId, text, images) {
   const session = getSession(sessionId);
 
-  // Always capture images (accepted at any point in the conversation)
+  // Always capture images — accepted at any point in the conversation
   if (images && images.length > 0) {
     images.forEach(img => session.data.images.push(img));
   }
 
   // Restart command
-  if (text && (text.toUpperCase().includes('BẮT ĐẦU LẠI') || text.toUpperCase() === 'RESTART')) {
+  const upperText = (text || '').toUpperCase().trim();
+  if (upperText.includes('BẮT ĐẦU LẠI') || upperText === 'RESTART') {
     sessions[sessionId] = { state: 'collecting', data: { images: [] }, history: [] };
     persistSessions();
     return { messages: [greetMessage()] };
   }
 
-  // Report ID status lookup
+  // Report ID status lookup — works in any state
   if (text && REPORT_ID_PATTERN.test(text.trim())) {
     const reportId = text.trim();
     const report   = getReport(reportId);
-    if (!report) {
-      return { messages: [`Không tìm thấy báo cáo *${reportId}*. Vui lòng kiểm tra lại mã.`] };
-    }
+    if (!report) return { messages: [`Không tìm thấy báo cáo *${reportId}*. Vui lòng kiểm tra lại mã.`] };
+
     const { getSlackReactionStatus } = require('./slack');
     const liveStatus = await getSlackReactionStatus(report.slackTs, report.slackChannel);
     const status     = liveStatus || report.status || 'In Progress';
@@ -162,114 +204,113 @@ async function processMessage(sessionId, text, images) {
   return { messages: [greetMessage()] };
 }
 
-// ── STATE: collecting (Claude-driven) ────────────────────────────────────
+// ── STATE: collecting — Claude drives the full conversation ───────────────
 async function handleCollecting(session, sessionId, text, images) {
   const { data, history } = session;
 
-  // Images sent with no text — acknowledge and prompt for description
+  // Images sent with no text at the very start
   if ((!text || text.trim().length < 2) && data.images.length > 0 && history.length === 0) {
-    const n        = data.images.length;
-    const response = `Cảm ơn bạn đã gửi ${n > 1 ? n + ' ảnh' : 'ảnh'}! Bạn có thể mô tả vấn đề đang gặp không?`;
-    history.push({ role: 'bot', text: response });
+    const n       = data.images.length;
+    const botMsg  = `Cảm ơn bạn đã gửi ${n > 1 ? n + ' ảnh' : 'ảnh'}! Bạn có thể mô tả vấn đề đang gặp không?`;
+    history.push({ role: 'assistant', content: botMsg });
     persistSessions();
-    return { messages: [response] };
+    return { messages: [botMsg] };
   }
 
   if (!text || text.trim().length < 2) {
     return { messages: [greetMessage()] };
   }
 
-  const userText = text.trim();
-  history.push({ role: 'user', text: userText });
-
-  // ── Ask Claude to orchestrate ─────────────────────────────────────────
-  let result;
-  try {
-    result = await analyzeAndCollect(history, data, userText);
-  } catch (e) {
-    console.error('[bot] analyzeAndCollect error:', e.message);
-    result = null;
+  // Build user content — append image note so Claude knows screenshots exist
+  let userContent = text.trim();
+  if (images && images.length > 0) {
+    userContent += `\n(${images.length} screenshot${images.length > 1 ? 's' : ''} attached)`;
   }
 
-  // Fallback when Claude is unavailable
-  if (!result) {
+  history.push({ role: 'user', content: userContent });
+
+  // ── Hand off to Claude with the system prompt + full history ──────────
+  const rawResponse = await conductConversation(history);
+
+  if (!rawResponse) {
+    // Fallback when Claude is unavailable (no API key or network issue)
     const missing = [];
     if (!data.details)  missing.push('mô tả vấn đề');
     if (!data.account)  missing.push('tên PG hoặc nông dân');
-    if (!data.platform) missing.push('vấn đề xảy ra trên iOS, Android hay Zoho');
+    if (!data.platform) missing.push('nền tảng (iOS / Android / Zoho)');
 
-    const response = missing.length > 0
+    const fallback = missing.length > 0
       ? `Bạn có thể cho tôi biết thêm: ${missing.join(', ')}?`
       : 'Bạn có thể mô tả thêm không?';
 
-    history.push({ role: 'bot', text: response });
+    history.push({ role: 'assistant', content: fallback });
     persistSessions();
     return {
-      messages:     [response],
+      messages:     [fallback],
       quickReplies: !data.platform ? ['iOS', 'Android', 'Zoho'] : null
     };
   }
 
-  // ── Apply extracted updates (don't overwrite richer existing values) ──
-  const u = result.updates || {};
+  // ── Check for completion signal ───────────────────────────────────────
+  const reportData = parseCompletionSignal(rawResponse);
 
-  if (u.details) {
-    // Prefer the longer / more informative description
-    if (!data.details || u.details.length > (data.details || '').length) {
-      data.details = u.details;
-    }
-  }
-  if (u.account  && !data.account)  data.account  = u.account;
-  if (u.platform && !data.platform) data.platform = u.platform;
-  if (u.urgency  && !data.urgency)  data.urgency  = u.urgency;
-  if (u.steps    && !data.steps)    data.steps    = u.steps;
-  if (u.category)                   data.category = u.category;
-  if (u.summary)                    data.summary  = u.summary;
+  if (reportData) {
+    // Apply all fields Claude collected
+    data.details  = reportData.details  || data.details  || '';
+    data.account  = reportData.account  || data.account  || '';
+    data.platform = reportData.platform || data.platform || '';
+    data.urgency  = reportData.urgency  || 'Medium';
+    data.steps    = reportData.steps    || '';
+    data.category = reportData.category || 'App Bug';
+    data.summary  = reportData.summary  || '';
 
-  // Add Claude's response to history
-  if (result.response) {
-    history.push({ role: 'bot', text: result.response });
-  }
+    // Store only the visible part of Claude's message (before the signal)
+    const visibleText = stripSignals(rawResponse);
+    if (visibleText) history.push({ role: 'assistant', content: visibleText });
+    persistSessions();
 
-  persistSessions();
-
-  // ── All required fields collected — ask for photo first if none yet ──
-  if (result.readyToConfirm) {
+    // Transition: ask for photo if none attached yet
     if (!data.images || data.images.length === 0) {
-      // Ask for screenshot before email
       session.state = 'photo';
       persistSessions();
-      const transition = result.response ? result.response + '\n\n' : '';
+      const photoPrompt = visibleText
+        ? `${visibleText}\n\nBạn có ảnh chụp màn hình nào muốn đính kèm không? Ảnh giúp kỹ thuật hiểu rõ hơn.`
+        : 'Bạn có ảnh chụp màn hình nào muốn đính kèm không? Ảnh giúp kỹ thuật hiểu rõ hơn.';
       return {
-        messages:     [`${transition}Bạn có ảnh chụp màn hình nào muốn đính kèm không? Ảnh sẽ giúp kỹ thuật hiểu rõ hơn.`],
+        messages:   [photoPrompt],
         quickReplies: ['⏭️ Bỏ qua'],
-        showUpload:   true
+        showUpload: true
       };
     }
-    // Already have images — go straight to email
+
+    // Already have images — skip straight to email
     session.state = 'email';
     persistSessions();
-    const imgNote = `Đã nhận ${data.images.length} ảnh chụp màn hình.\n\n`;
     return {
-      messages: [`${imgNote}Cuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)`]
+      messages: [`Đã nhận ${data.images.length} ảnh chụp màn hình.\n\nCuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)`]
     };
   }
 
+  // ── Normal response — relay Claude's message as-is ────────────────────
+  const quickReplies  = parseQuickReplies(rawResponse);
+  const displayText   = stripSignals(rawResponse);
+
+  history.push({ role: 'assistant', content: displayText || rawResponse });
+  persistSessions();
+
   return {
-    messages:     [result.response || 'Bạn có thể mô tả thêm không?'],
-    quickReplies: result.quickReplies || null
+    messages:     [displayText || rawResponse],
+    quickReplies: quickReplies || null
   };
 }
 
-// ── STATE: photo ─────────────────────────────────────────────────────────
-// Images are captured at the top of processMessage regardless of state,
-// so by the time we get here the images array is already updated.
+// ── STATE: photo ──────────────────────────────────────────────────────────
 async function handlePhoto(session, sessionId, text) {
-  // Move on whether they attached images or clicked Skip
+  // Images are captured at the top of processMessage regardless of state
   session.state = 'email';
   persistSessions();
 
-  const n = (session.data.images || []).length;
+  const n       = (session.data.images || []).length;
   const imgNote = n > 0 ? `Đã nhận ${n} ảnh chụp màn hình! 📸\n\n` : '';
   return {
     messages: [`${imgNote}Cuối cùng, email công ty của bạn là gì? (ví dụ: ten@rize.farm)`]
@@ -287,7 +328,7 @@ async function handleEmail(session, sessionId, text) {
 
   data.email = text.trim().toLowerCase();
 
-  // Fill defaults
+  // Fill any missing defaults
   if (!data.summary)  data.summary  = (data.details || '').split(/[.!?\n]/)[0].trim().substring(0, 100);
   if (!data.urgency)  data.urgency  = 'Medium';
   if (!data.category) data.category = 'App Bug';
@@ -308,7 +349,7 @@ async function handleConfirm(session, sessionId, text) {
   const upper = (text || '').toUpperCase().trim();
 
   if (upper.includes('GỬI') || upper.includes('GUI') || upper.includes('✅') || upper.includes('SEND')) {
-    const reportId   = generateReportId();
+    const reportId    = generateReportId();
     const slackResult = await postToSlack({ ...data, reportId });
 
     saveReport(reportId, {
@@ -323,8 +364,8 @@ async function handleConfirm(session, sessionId, text) {
       urgency:      data.urgency      || 'Medium',
       imageCount:   (data.images || []).length,
       status:       'In Progress',
-      slackTs:      slackResult?.ts      || null,
-      slackChannel: slackResult?.channel || null,
+      slackTs:      slackResult?.ts       || null,
+      slackChannel: slackResult?.channel  || null,
       createdAt:    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     });
 
