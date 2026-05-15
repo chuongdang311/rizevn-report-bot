@@ -52,19 +52,19 @@
     .qr-btn:hover, .qr-btn:active { background: var(--green); color: white; }
     .qr-btn:disabled { opacity: 0.4; pointer-events: none; }
 
-    /* Image grid in chat */
+    /* Media grid in chat (images + videos) */
     .image-grid { display: flex; flex-wrap: wrap; gap: 6px; max-width: 280px; }
-    .image-grid img { width: 130px; height: 100px; object-fit: cover; border-radius: 10px; cursor: pointer; }
-    .image-grid img:only-child { width: 200px; height: 160px; }
+    .image-grid img, .image-grid video { width: 130px; height: 100px; object-fit: cover; border-radius: 10px; cursor: pointer; display: block; }
+    .image-grid img:only-child, .image-grid video:only-child { width: 200px; height: 160px; }
 
     /* Input area */
     .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 10px 12px; flex-shrink: 0; }
 
-    /* Image previews strip */
+    /* Media previews strip */
     .previews-strip { display: none; gap: 8px; padding: 8px 0; overflow-x: auto; margin-bottom: 6px; }
     .previews-strip.visible { display: flex; }
     .preview-item { position: relative; flex-shrink: 0; }
-    .preview-item img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; display: block; }
+    .preview-item img, .preview-item video { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; display: block; }
     .preview-remove { position: absolute; top: -6px; right: -6px; background: #e53e3e; color: white; border: none; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
 
     /* Upload prompt */
@@ -96,8 +96,8 @@
     /* Lightbox */
     .lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; align-items: center; justify-content: center; }
     .lightbox.open { display: flex; }
-    .lightbox img { max-width: 95vw; max-height: 90vh; border-radius: 8px; }
-    .lightbox-close { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; cursor: pointer; }
+    .lightbox img, .lightbox video { max-width: 95vw; max-height: 90vh; border-radius: 8px; }
+    .lightbox-close { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; cursor: pointer; line-height: 1; }
   </style>
 </head>
 <body>
@@ -115,11 +115,11 @@
 <div class="input-area">
   <div class="previews-strip" id="previewsStrip"></div>
   <div class="upload-prompt" id="uploadPrompt" onclick="triggerFileInput()">
-    📷 <strong>Nhấn để đính kèm ảnh</strong> — có thể chọn nhiều ảnh cùng lúc
+    📎 <strong>Nhấn để đính kèm ảnh hoặc video</strong> — có thể chọn nhiều file cùng lúc
   </div>
   <div class="input-row">
-    <input type="file" id="file-input" accept="image/*" multiple onchange="handleFileSelect(event)" />
-    <button class="attach-btn" id="attachBtn" onclick="triggerFileInput()" title="Đính kèm ảnh">
+    <input type="file" id="file-input" accept="image/*,video/*" multiple onchange="handleFileSelect(event)" />
+    <button class="attach-btn" id="attachBtn" onclick="triggerFileInput()" title="Đính kèm ảnh / video">
       📎
       <span class="attach-count" id="attachCount">0</span>
     </button>
@@ -131,10 +131,11 @@
   </div>
 </div>
 
-<!-- Lightbox -->
+<!-- Lightbox (images + video) -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
-  <span class="lightbox-close">✕</span>
-  <img id="lightboxImg" src="" alt="" />
+  <span class="lightbox-close" onclick="closeLightbox()">✕</span>
+  <img    id="lightboxImg"   src="" alt="" style="display:none" />
+  <video  id="lightboxVideo" src=""        style="display:none" controls></video>
 </div>
 
 <script>
@@ -262,11 +263,26 @@
     const grid = document.createElement('div');
     grid.className = 'image-grid';
     images.forEach((src, i) => {
-      const img = document.createElement('img');
-      img.src = (src === '[image]') ? 'data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==' : src;
-      img.alt = `Ảnh ${i + 1}`;
-      if (src !== '[image]') img.onclick = () => openLightbox(src);
-      grid.appendChild(img);
+      const placeholder = src === '[image]';
+      const isVideo     = !placeholder && src.startsWith('data:video/');
+      let el;
+      if (placeholder) {
+        el = document.createElement('img');
+        el.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==';
+        el.alt = `Tệp ${i + 1}`;
+      } else if (isVideo) {
+        el = document.createElement('video');
+        el.src = src;
+        el.muted = true;
+        el.preload = 'metadata';
+        el.onclick = () => openLightbox(src);
+      } else {
+        el = document.createElement('img');
+        el.src = src;
+        el.alt = `Ảnh ${i + 1}`;
+        el.onclick = () => openLightbox(src);
+      }
+      grid.appendChild(el);
     });
     row.appendChild(grid);
     chatArea.appendChild(row);
@@ -334,8 +350,12 @@
     if (!files.length) return;
 
     files.forEach(file => {
-      if (file.size > 10 * 1024 * 1024) {
-        alert(`Ảnh "${file.name}" quá lớn (>10MB). Vui lòng chọn ảnh nhỏ hơn.`);
+      const isVideo  = file.type.startsWith('video/');
+      const maxBytes = isVideo ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+      const label    = isVideo ? 'Video' : 'Ảnh';
+      const maxLabel = isVideo ? '50MB' : '20MB';
+      if (file.size > maxBytes) {
+        alert(`${label} "${file.name}" quá lớn (>${maxLabel}). Vui lòng chọn file nhỏ hơn.`);
         return;
       }
       const reader = new FileReader();
@@ -360,12 +380,13 @@
     attachCount.classList.add('visible');
 
     pendingImages.forEach((src, i) => {
-      const item = document.createElement('div');
+      const item    = document.createElement('div');
       item.className = 'preview-item';
-      item.innerHTML = `
-        <img src="${src}" alt="preview ${i+1}" />
-        <button class="preview-remove" onclick="removeImage(${i})">✕</button>
-      `;
+      const isVideo  = src.startsWith('data:video/');
+      const mediaTag = isVideo
+        ? `<video src="${src}" muted preload="metadata"></video>`
+        : `<img src="${src}" alt="preview ${i+1}" />`;
+      item.innerHTML = `${mediaTag}<button class="preview-remove" onclick="removeImage(${i})">✕</button>`;
       previewsStrip.appendChild(item);
     });
     uploadPrompt.classList.remove('visible');
@@ -388,10 +409,23 @@
 
   // ── Lightbox ──────────────────────────────────────────────────────────────
   function openLightbox(src) {
-    document.getElementById('lightboxImg').src = src;
+    const img = document.getElementById('lightboxImg');
+    const vid = document.getElementById('lightboxVideo');
+    if (src.startsWith('data:video/')) {
+      img.style.display = 'none';
+      vid.style.display = 'block';
+      vid.src = src;
+    } else {
+      vid.style.display = 'none';
+      img.style.display = 'block';
+      img.src = src;
+    }
     document.getElementById('lightbox').classList.add('open');
   }
   function closeLightbox() {
+    const vid = document.getElementById('lightboxVideo');
+    vid.pause();
+    vid.src = '';
     document.getElementById('lightbox').classList.remove('open');
   }
 
