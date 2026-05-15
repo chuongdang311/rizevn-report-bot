@@ -23,72 +23,92 @@ function slackHeaders() {
   };
 }
 
-// ── Upload images to Slack thread ─────────────────────────────────────────
-async function uploadImagesToThread(channel, threadTs, images, reportId) {
+// ── Media type detection ──────────────────────────────────────────────────
+function getMediaInfo(dataUrl) {
+  const match   = dataUrl.match(/^data:([^;]+);base64,/);
+  const mime    = match ? match[1] : 'image/jpeg';
+  const extMap  = {
+    'image/png':       'png',
+    'image/jpeg':      'jpg',
+    'image/gif':       'gif',
+    'image/webp':      'webp',
+    'video/mp4':       'mp4',
+    'video/quicktime': 'mov',
+    'video/webm':      'webm',
+    'video/mpeg':      'mpg'
+  };
+  return {
+    mimeType: mime,
+    ext:      extMap[mime] || 'bin',
+    isVideo:  mime.startsWith('video/')
+  };
+}
+
+// ── Upload images + videos to Slack thread ────────────────────────────────
+async function uploadMediaToThread(channel, threadTs, images, reportId) {
   if (!images || images.length === 0 || !process.env.SLACK_BOT_TOKEN) return;
 
-  console.log(`[images] Uploading ${images.length} image(s) to thread ${threadTs}`);
+  console.log(`[media] Uploading ${images.length} file(s) to thread ${threadTs}`);
 
   for (let i = 0; i < images.length; i++) {
     try {
       const imgData = images[i];
-      const base64 = imgData.replace(/^data:image\/\w+;base64,/, '');
-      const ext = imgData.startsWith('data:image/png') ? 'png' : 'jpg';
-      const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+      const { mimeType, ext, isVideo } = getMediaInfo(imgData);
+      const base64 = imgData.replace(/^data:[^;]+;base64,/, '');
       const buffer = Buffer.from(base64, 'base64');
-      console.log(`[images] Image ${i + 1}: ${ext}, ${buffer.length} bytes`);
+      const kind   = isVideo ? 'video' : 'image';
+      console.log(`[media] File ${i + 1}: ${kind}/${ext}, ${buffer.length} bytes`);
 
       // Step 1: Request an upload URL from Slack
       const urlRes = await fetch(`${SLACK_API}/files.getUploadURLExternal`, {
         method: 'POST',
         headers: slackHeaders(),
         body: JSON.stringify({
-          filename: `${reportId}-screenshot-${i + 1}.${ext}`,
-          length: buffer.length,
-          alt_txt: `Screenshot ${i + 1}`
+          filename: `${reportId}-attachment-${i + 1}.${ext}`,
+          length:   buffer.length,
+          alt_txt:  `Attachment ${i + 1}`
         })
       });
       const urlData = await urlRes.json();
-      console.log(`[images] getUploadURL response:`, JSON.stringify(urlData));
+      console.log(`[media] getUploadURL response:`, JSON.stringify(urlData));
 
       if (!urlData.ok) {
-        // missing_scope means files:write wasn't added to the Slack app
         if (urlData.error === 'missing_scope') {
-          console.error('[images] ERROR: Bot token missing "files:write" scope. Go to api.slack.com/apps → OAuth & Permissions → add files:write → reinstall app.');
+          console.error('[media] ERROR: Bot token missing "files:write" scope — go to api.slack.com/apps → OAuth & Permissions → add files:write → Reinstall to Workspace, then update SLACK_BOT_TOKEN in Render.');
         } else {
-          console.error(`[images] Upload URL error (image ${i + 1}):`, urlData.error);
+          console.error(`[media] Upload URL error (file ${i + 1}):`, urlData.error);
         }
         continue;
       }
 
-      // Step 2: Upload binary to Slack's presigned URL (no auth header needed here)
+      // Step 2: Upload binary to Slack's presigned URL (no auth header)
       const uploadRes = await fetch(urlData.upload_url, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': mimeType },
-        body: buffer
+        body:    buffer
       });
-      console.log(`[images] Upload step status: ${uploadRes.status}`);
+      console.log(`[media] Upload step status: ${uploadRes.status}`);
 
-      // Step 3: Complete the upload and share into the thread
+      // Step 3: Complete and share into the thread
       const completeRes = await fetch(`${SLACK_API}/files.completeUploadExternal`, {
         method: 'POST',
         headers: slackHeaders(),
         body: JSON.stringify({
-          files: [{ id: urlData.file_id, title: `Screenshot ${i + 1} — ${reportId}` }],
+          files:      [{ id: urlData.file_id, title: `Attachment ${i + 1} — ${reportId}` }],
           channel_id: channel,
-          thread_ts: threadTs
+          thread_ts:  threadTs
         })
       });
       const completeData = await completeRes.json();
-      console.log(`[images] completeUpload response:`, JSON.stringify(completeData));
+      console.log(`[media] completeUpload response:`, JSON.stringify(completeData));
 
       if (!completeData.ok) {
-        console.error(`[images] Complete upload error (image ${i + 1}):`, completeData.error);
+        console.error(`[media] Complete upload error (file ${i + 1}):`, completeData.error);
       } else {
-        console.log(`[images] Image ${i + 1} uploaded successfully`);
+        console.log(`[media] File ${i + 1} (${kind}) uploaded successfully`);
       }
     } catch (e) {
-      console.error(`[images] Image ${i + 1} upload exception:`, e.message);
+      console.error(`[media] File ${i + 1} upload exception:`, e.message);
     }
   }
 }
@@ -133,7 +153,7 @@ async function postToSlack(report) {
     : '';
 
   const imageNote = imageCount > 0
-    ? `\n\n_${imageCount} screenshot${imageCount > 1 ? 's' : ''} attached in thread_`
+    ? `\n\n_${imageCount} attachment${imageCount > 1 ? 's' : ''} (screenshots/video) in thread_`
     : '';
 
   const text = `*[${report.category}] ${elaborated.heading}*
@@ -185,9 +205,9 @@ _React with ✅ when resolved_`;
     console.error('Failed to add reaction:', e.message);
   }
 
-  // Upload screenshots as thread replies
+  // Upload screenshots / videos as thread replies
   if (imageCount > 0) {
-    await uploadImagesToThread(postedChannel, ts, report.images || [], report.reportId);
+    await uploadMediaToThread(postedChannel, ts, report.images || [], report.reportId);
   }
 
   return { ts, channel: postedChannel };
