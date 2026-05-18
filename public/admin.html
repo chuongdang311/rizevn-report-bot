@@ -56,9 +56,68 @@
     .urgency-high { color: #dc2626; font-weight: 600; }
     .urgency-medium { color: #d97706; }
     .urgency-low { color: #059669; }
+
+    tr.clickable-row { cursor: pointer; }
+
+    /* ── Detail panel ── */
+    .panel-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35); z-index: 100;
+    }
+    .panel-overlay.open { display: block; }
+    .detail-panel {
+      position: fixed; top: 0; right: -520px; width: 500px; max-width: 95vw;
+      height: 100vh; background: white; box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+      z-index: 101; display: flex; flex-direction: column;
+      transition: right 0.25s ease;
+      overflow: hidden;
+    }
+    .detail-panel.open { right: 0; }
+    .panel-header {
+      background: #1a6b3c; color: white; padding: 16px 20px;
+      display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .panel-header h2 { font-size: 15px; margin: 0; }
+    .panel-close {
+      background: none; border: none; color: white; font-size: 22px;
+      cursor: pointer; line-height: 1; padding: 0 4px;
+    }
+    .panel-body { flex: 1; overflow-y: auto; padding: 20px; }
+    .panel-section { margin-bottom: 20px; }
+    .panel-section h3 {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #888; margin-bottom: 8px;
+    }
+    .panel-section p, .panel-section pre {
+      font-size: 13px; color: #222; line-height: 1.6;
+      white-space: pre-wrap; word-break: break-word;
+      background: #f7f7f7; border-radius: 8px; padding: 12px; margin: 0;
+    }
+    .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+    .meta-grid .label { color: #888; white-space: nowrap; }
+    .meta-grid .val   { color: #222; font-weight: 500; word-break: break-word; }
+
+    /* Conversation transcript */
+    .transcript { display: flex; flex-direction: column; gap: 10px; }
+    .bubble { border-radius: 12px; padding: 10px 14px; font-size: 13px; line-height: 1.5; max-width: 90%; white-space: pre-wrap; word-break: break-word; }
+    .bubble.user { background: #e8f5ee; align-self: flex-end; color: #1a3d28; }
+    .bubble.assistant { background: #f0f0f0; align-self: flex-start; color: #222; }
+    .bubble-label { font-size: 10px; color: #aaa; margin-bottom: 2px; }
+    .user-side { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; max-width: 90%; }
+    .assistant-side { align-self: flex-start; display: flex; flex-direction: column; align-items: flex-start; max-width: 90%; }
   </style>
 </head>
 <body>
+
+<!-- Detail panel -->
+<div class="panel-overlay" id="panelOverlay" onclick="closePanel()"></div>
+<div class="detail-panel" id="detailPanel">
+  <div class="panel-header">
+    <h2 id="panelTitle">Chi tiết báo cáo</h2>
+    <button class="panel-close" onclick="closePanel()">×</button>
+  </div>
+  <div class="panel-body" id="panelBody"></div>
+</div>
 
 <div class="header">
   <span style="font-size:22px">🌾</span>
@@ -177,19 +236,20 @@
     }
 
     body.innerHTML = filtered.map(r => {
-      const urgencyClass = r.urgency === 'Khẩn cấp' ? 'urgency-high' : r.urgency === 'Trung bình' ? 'urgency-medium' : 'urgency-low';
+      const urgencyClass = r.urgency === 'High' ? 'urgency-high' : r.urgency === 'Low' ? 'urgency-low' : 'urgency-medium';
       const statusClass = r.status === 'Đã xử lý' ? 'status-done' : r.status === 'Cần thêm thông tin' ? 'status-need-info' : r.status === 'Không tái hiện được' ? 'status-cant-repro' : 'status-processing';
+      const idx = allReports.indexOf(r);
       return `
-        <tr>
+        <tr class="clickable-row" onclick="openPanel(${idx})">
           <td><code style="font-size:12px">${r.reportId || ''}</code><br><small style="color:#999">${r.createdAt || ''}</small></td>
           <td class="${r.type === 'bug' ? 'type-bug' : 'type-admin'}">${r.type === 'bug' ? '🐛 Bug' : '📋 Admin'}</td>
-          <td>${escapeHtml(r.name || '')}</td>
+          <td>${escapeHtml(r.email || r.name || '')}</td>
           <td>${escapeHtml(r.account || '')}</td>
-          <td style="max-width:200px;word-break:break-word">${escapeHtml(r.issue || '')}</td>
+          <td style="max-width:200px;word-break:break-word">${escapeHtml((r.summary || r.issue || '').substring(0, 80))}</td>
           <td class="${urgencyClass}">${r.urgency || ''}</td>
           <td><span class="status-badge ${statusClass}">${r.status || ''}</span></td>
-          <td>
-            <select onchange="updateStatus('${r.reportId}', this.value)" style="margin-bottom:4px">
+          <td onclick="event.stopPropagation()">
+            <select onchange="updateStatus('${r.reportId}', this.value)">
               <option value="">Đổi trạng thái...</option>
               <option value="Đang xử lý">Đang xử lý</option>
               <option value="Đã xử lý">Đã xử lý</option>
@@ -225,6 +285,78 @@
   function escapeHtml(text) {
     return (text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
+
+  // ── Detail panel ──────────────────────────────────────────────────────────
+  function openPanel(idx) {
+    const r = allReports[idx];
+    if (!r) return;
+
+    document.getElementById('panelTitle').textContent = r.reportId || 'Chi tiết báo cáo';
+
+    const urgencyLabel = r.urgency === 'High' ? '🔴 Cao' : r.urgency === 'Low' ? '🟢 Thấp' : '🟡 Trung bình';
+    const imgNote = r.imageCount > 0 ? `${r.imageCount} file đính kèm` : 'Không có';
+
+    let transcriptHtml = '';
+    if (r.history && r.history.length > 0) {
+      const bubbles = r.history.map(h => {
+        const isUser = h.role === 'user';
+        const side   = isUser ? 'user-side' : 'assistant-side';
+        const cls    = isUser ? 'bubble user' : 'bubble assistant';
+        const lbl    = isUser ? 'AG' : 'Bot';
+        return `<div class="${side}"><div class="bubble-label">${lbl}</div><div class="${cls}">${escapeHtml(h.content)}</div></div>`;
+      }).join('');
+      transcriptHtml = `
+        <div class="panel-section">
+          <h3>Lịch sử hội thoại</h3>
+          <div class="transcript">${bubbles}</div>
+        </div>`;
+    } else {
+      transcriptHtml = `
+        <div class="panel-section">
+          <h3>Lịch sử hội thoại</h3>
+          <p style="color:#aaa;background:none;padding:0">Không có dữ liệu — chỉ khả dụng cho báo cáo mới sau khi cập nhật này được deploy.</p>
+        </div>`;
+    }
+
+    document.getElementById('panelBody').innerHTML = `
+      <div class="panel-section">
+        <h3>Thông tin chung</h3>
+        <div class="meta-grid">
+          <span class="label">Email</span>      <span class="val">${escapeHtml(r.email || '—')}</span>
+          <span class="label">PG / Nông dân</span><span class="val">${escapeHtml(r.account || '—')}</span>
+          <span class="label">Nền tảng</span>   <span class="val">${escapeHtml(r.platform || '—')}</span>
+          <span class="label">Loại</span>        <span class="val">${escapeHtml(r.category || '—')}</span>
+          <span class="label">Khẩn cấp</span>   <span class="val">${urgencyLabel}</span>
+          <span class="label">Ảnh đính kèm</span><span class="val">${imgNote}</span>
+          <span class="label">Gửi lúc</span>    <span class="val">${escapeHtml(r.createdAt || '—')}</span>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h3>Tóm tắt</h3>
+        <p>${escapeHtml(r.summary || r.issue || '—')}</p>
+      </div>
+
+      <div class="panel-section">
+        <h3>Mô tả đầy đủ</h3>
+        <pre>${escapeHtml(r.details || '—')}</pre>
+      </div>
+
+      ${r.steps ? `<div class="panel-section"><h3>Các bước tái hiện</h3><pre>${escapeHtml(r.steps)}</pre></div>` : ''}
+
+      ${transcriptHtml}
+    `;
+
+    document.getElementById('panelOverlay').classList.add('open');
+    document.getElementById('detailPanel').classList.add('open');
+  }
+
+  function closePanel() {
+    document.getElementById('panelOverlay').classList.remove('open');
+    document.getElementById('detailPanel').classList.remove('open');
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
 </script>
 </body>
 </html>
