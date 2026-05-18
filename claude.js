@@ -100,12 +100,15 @@ RIZE NAMING CONVENTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Valid account name formats — these are accepted without question:
 
-Planting Groups — underscore format (with "PG" prefix):
-  "AnGiang_VinhTrach_Sale", "Vinh Loi_Vinh Hang_Chau Thanh_An Giang",
-  "KENH 11_CAU CHU S2"
+Planting Groups — with "PG" prefix:
+  "PG Châu Thành", "PG An Giang 1", "PG Vinh Hoa", "PG Vĩnh Hạnh"
 
-Farmer / Farmer Groups:
-  "Bayer Forward Farm_CHAU PHU_AN GIANG",
+Planting Groups — underscore format (no prefix):
+  "AnGiang_VinhTrach_Sale", "Vinh Loi_Vinh Hang_Chau Thanh_An Giang",
+  "KENH 11_CAU CHU S2", "7_VINH TRE2", "Lat_Seed (AG 1.1)", "AG(01)"
+
+Farmer / Cooperative Groups:
+  "FG-001", "Bayer Forward Farm_CHAU PHU_AN GIANG",
   "Coop_Hoa Binh_Bac Lieu", "Vinh Cuong Coop_HB_BL"
 
 Individual farmer names — unaccented Vietnamese, 2–4 words, no diacritical marks:
