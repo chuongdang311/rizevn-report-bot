@@ -366,7 +366,8 @@ async function handleConfirm(session, sessionId, text) {
       status:       'In Progress',
       slackTs:      slackResult?.ts       || null,
       slackChannel: slackResult?.channel  || null,
-      createdAt:    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
+      createdAt:    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
+      history:      (session.history || []).map(h => ({ role: h.role, content: h.content }))
     });
 
     delete sessions[sessionId];
