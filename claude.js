@@ -69,7 +69,7 @@ BUG CATEGORIES — pick exactly one
 FIELDS TO COLLECT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-REQUIRED — do not emit the completion signal until all three are present:
+REQUIRED — do not emit the completion signal until ALL of the following are present:
 
 1. DESCRIPTION
    What is the issue? Must include at minimum:
@@ -86,10 +86,22 @@ REQUIRED — do not emit the completion signal until all three are present:
 3. PLATFORM
    Where the issue occurs: iOS, Android, or Zoho.
 
+4. APP VERSION (iOS and Android only — skip entirely for Zoho)
+   The version of the Rize mobile app. Format: digits.digits.digits — e.g. 1.24.1, 2.0.3, 1.9.11.
+   Ask: "Bạn đang dùng phiên bản app nào? Vào Settings (góc trên bên phải) > Xem phiên bản app ở cuối màn hình."
+   Validate: the answer must match the pattern X.XX.X (numbers and dots only, exactly 3 parts).
+   If the AG gives something that doesn't match — free text, a date, "mới nhất", etc. — ask again:
+     "Phiên bản cần đúng định dạng như 1.24.1. Bạn thấy số gì ở cuối màn hình Settings?"
+   Do NOT accept anything that isn't a proper version number.
+
+5. STEPS TO REPRODUCE
+   Always ask, for every report, regardless of how much detail the AG already gave.
+   Ask exactly: "Hãy mô tả các bước để tái hiện lại lỗi này. Ví dụ: Vào app > Vào group > Tạo Planting Group > Add nông dân"
+   Record the steps verbatim. A minimum of one step is sufficient — do not interrogate if they give something brief.
+
 OPTIONAL — record if the AG mentions them naturally, do not ask:
 
-- URGENCY  : High / Medium / Low. Default Medium. Trigger words: "urgent", "gấp", "khẩn", "critical", "nghiêm trọng".
-- STEPS    : How the AG encountered the issue. Only ask if the description gives zero context on how the issue occurred.
+- URGENCY : High / Medium / Low. Default Medium. Trigger words: "urgent", "gấp", "khẩn", "critical", "nghiêm trọng".
 
 NEVER ask for:
 - Email — the interface handles this separately
@@ -233,22 +245,25 @@ Before emitting the completion signal, run this pre-flight checklist mentally:
   □ Is the account name a farmer name with Vietnamese accents? → STOP, ask to rewrite
   □ Does the account name start with HTX / HKD / Coop? → STOP, ask for type clarification
   □ Is the account name a multi-word PG with no underscore? → STOP, ask to rewrite
-Only if all three boxes pass may you emit [REPORT_READY].
+  □ Platform is iOS or Android — is app version collected and valid (X.X.X format)? → STOP if not
+  □ Have steps to reproduce been collected? → STOP if not
+Only if all five boxes pass may you emit [REPORT_READY].
 
-When you have collected a sufficient description, a validated account, and a platform:
+When you have collected a sufficient description, validated account, platform, app version (if applicable), and steps:
 
 1. Write your final Vietnamese confirmation message to the user (e.g. "Cảm ơn, mình đã có đủ thông tin rồi!").
 2. On a new line, output EXACTLY:
 
 [REPORT_READY]
-{"details":"<exact AG description, all relevant messages concatenated>","account":"<exact name(s) as written>","platform":"iOS|Android|Zoho","urgency":"High|Medium|Low","steps":"<steps text or empty string>","category":"<one of the six categories>","summary":"<8–10 word English phrase describing the core issue>"}
+{"details":"<exact AG description, all relevant messages concatenated>","account":"<exact name(s) as written>","platform":"iOS|Android|Zoho","appVersion":"<version string, e.g. 1.24.1, or empty string for Zoho>","urgency":"High|Medium|Low","steps":"<steps to reproduce verbatim>","category":"<one of the six categories>","summary":"<8–10 word English phrase describing the core issue>"}
 
 Rules for the completion JSON:
-- "details"  : the AG's description verbatim across all their messages — never summarised
-- "account"  : exact name(s) as the AG wrote them — never generated or inferred differently
-- "urgency"  : "Medium" if never mentioned
-- "steps"    : "" (empty string) if not provided
-- "summary"  : English only, 8–10 words, technical and specific
+- "details"    : the AG's description verbatim across all their messages — never summarised
+- "account"    : exact name(s) as the AG wrote them — never generated or inferred differently
+- "appVersion" : version string exactly as provided (e.g. "1.24.1") — empty string "" for Zoho
+- "urgency"    : "Medium" if never mentioned
+- "steps"      : the AG's steps verbatim — never empty (always collected)
+- "summary"    : English only, 8–10 words, technical and specific
 - The JSON must be valid, on a single line, immediately after [REPORT_READY]
 - Do not add any text after the JSON block
 `.trim();
@@ -300,26 +315,33 @@ async function conductConversation(messageHistory) {
 // Returns { heading, description, account, steps } — all in English.
 
 async function elaborateReport(report) {
-  const raw = await callClaude(`You are preparing a professional bug report for Rize Vietnam's engineering team in Slack.
+  const raw = await callClaude(`You are writing a bug report message for Rize Vietnam's internal Slack channel. The audience is the tech team — they know the product well.
 
 INPUT (may be in Vietnamese or mixed language):
 Description: ${report.details || '(not provided)'}
 Category: ${report.category || 'App Bug'}
-PG/Farmer name given by user: ${report.account || '(not provided)'}
-Steps/how they encountered it: ${report.steps || '(not provided)'}
+PG/Farmer name: ${report.account || '(not provided)'}
+Steps: ${report.steps || '(not provided)'}
 
 OUTPUT RULES — return ONLY valid JSON, no markdown:
 {
-  "heading": "Write in ENGLISH. 8-12 words. A clear technical summary of the actual bug — not a translation of the description. Example: 'Farmers unable to complete KYC update in planting group'",
-  "description": "Write in ENGLISH. 2-4 sentences. Explain what fails, which app feature/screen is affected, and any relevant context. Expand with implied technical details. Do NOT just translate word-for-word.",
+  "heading": "ENGLISH. 8-12 words. What broke, where. Specific and factual. Example: 'Farmer name missing in Zoho after being added to planting group'",
+  "description": "ENGLISH. 1-2 sentences MAX. State what happened and where. Conversational tone — write like you're messaging a colleague, not filing a formal report. Use short product names (Zoho not 'Zoho CRM', KYC not 'identity verification flow'). Do NOT add explanatory sentences like 'This indicates...', 'This suggests...', 'This prevents...' — just say what happened. Do NOT pad with implications or impact analysis.",
   "account": "Copy the PG/Farmer name EXACTLY as given in the input field above. Do NOT generate or replace with text from the description. If it was '(not provided)', write 'Not specified'.",
-  "steps": "Write in ENGLISH. Numbered steps if provided. If not provided, write exactly: Not provided."
+  "steps": "ENGLISH. Numbered list of steps as provided. Keep it verbatim — just translate from Vietnamese if needed. If not provided, write: Not provided."
 }
 
+TONE EXAMPLES:
+  ✓ "Farmer completed KYC but name isn't showing in Zoho."
+  ✗ "A farmer has completed their profile information and been added to a planting group, but their name does not appear in Zoho CRM for order fulfillment purposes. This indicates a synchronization failure between the farmer management system and Zoho, preventing the farmer from being visible for supply chain operations."
+
+  ✓ "APD input screen crashes when submitting water level data."
+  ✗ "The APD input feature experiences a critical failure during the data submission process, which prevents agronomists from recording water level measurements and disrupts the AWD monitoring workflow."
+
 CRITICAL RULES:
-- heading, description, steps: must be in English
-- account: must be copied exactly from the input — never generated from description text
-- Vietnamese proper nouns (people names, place names, PG names) stay as-is`, 700);
+- heading, description, steps: English only
+- account: copied exactly from input — never generated from description text
+- Vietnamese proper nouns (names, places, PG names) stay as-is in all fields`, 700);
 
   const fallback = {
     heading:     report.summary || (report.details || '').split(/[.!?\n]/)[0].trim().substring(0, 80) || 'Issue reported',
