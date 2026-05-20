@@ -161,11 +161,13 @@ async function postToSlack(report) {
     ? `\n\n_${imageCount} attachment${imageCount > 1 ? 's' : ''} (screenshots/video) in thread_`
     : '';
 
+  const versionLine = report.appVersion ? `\n*App Version:*   ${report.appVersion}` : '';
+
   const text = `*[${report.category}] ${elaborated.heading}*
 
 *Reporter:*      ${report.email}
 *PG / Farmer:*   ${elaborated.account}
-*Platform:*      ${report.platform || 'N/A'}
+*Platform:*      ${report.platform || 'N/A'}${versionLine}
 *Urgency:*       ${urgencyLabel}
 *Submitted:*     ${timestamp} (GMT+7)
 
