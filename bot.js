@@ -137,12 +137,14 @@ function buildSummary(data) {
     'Integration':      'Tích hợp'
   }[data.category] || (data.category || 'Lỗi ứng dụng');
 
+  const versionNote = data.appVersion ? `\n*Phiên bản app:*        ${data.appVersion}` : '';
+
   return (
     `*Xác nhận báo cáo:*\n\n` +
     `[${catVi}] ${data.summary || (data.details || '').substring(0, 80)}\n\n` +
     `*Email:*               ${data.email}\n` +
     `*PG / Nông dân:*       ${data.account  || '—'}\n` +
-    `*Nền tảng:*            ${data.platform || '—'}\n` +
+    `*Nền tảng:*            ${data.platform || '—'}${versionNote}\n` +
     `*Mức độ khẩn cấp:*     ${urgencyLabel}\n` +
     `*Ảnh đính kèm:*        ${photoNote}\n\n` +
     `*Mô tả vấn đề:*\n${data.details}` +
@@ -256,13 +258,14 @@ async function handleCollecting(session, sessionId, text, images) {
 
   if (reportData) {
     // Apply all fields Claude collected
-    data.details  = reportData.details  || data.details  || '';
-    data.account  = reportData.account  || data.account  || '';
-    data.platform = reportData.platform || data.platform || '';
-    data.urgency  = reportData.urgency  || 'Medium';
-    data.steps    = reportData.steps    || '';
-    data.category = reportData.category || 'App Bug';
-    data.summary  = reportData.summary  || '';
+    data.details     = reportData.details     || data.details  || '';
+    data.account     = reportData.account     || data.account  || '';
+    data.platform    = reportData.platform    || data.platform || '';
+    data.appVersion  = reportData.appVersion  || '';
+    data.urgency     = reportData.urgency     || 'Medium';
+    data.steps       = reportData.steps       || '';
+    data.category    = reportData.category    || 'App Bug';
+    data.summary     = reportData.summary     || '';
 
     // Store only the visible part of Claude's message (before the signal)
     const visibleText = stripSignals(rawResponse);
@@ -356,6 +359,7 @@ async function handleConfirm(session, sessionId, text) {
       email:        data.email,
       account:      data.account      || '',
       platform:     data.platform     || '',
+      appVersion:   data.appVersion   || '',
       category:     data.category     || 'App Bug',
       summary:      data.summary      || '',
       issue:        data.summary      || '',
