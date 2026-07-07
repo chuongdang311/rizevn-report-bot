@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const STORE_FILE = path.join(__dirname, 'reports.json');
-const IMAGES_DIR = path.join(__dirname, 'images');
+// Use DATA_DIR env var when available (Fly.io persistent volume mounted at /data)
+const DATA_DIR   = process.env.DATA_DIR || __dirname;
+const STORE_FILE = path.join(DATA_DIR, 'reports.json');
+const IMAGES_DIR = path.join(DATA_DIR, 'images');
 
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
