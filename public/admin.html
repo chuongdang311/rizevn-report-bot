@@ -22,15 +22,24 @@
     .btn:hover { background: #134d2c; }
     .btn-sm { width: auto; padding: 6px 14px; font-size: 13px; border-radius: 6px; }
 
-    .admin-container { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .admin-container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .table-scroll { overflow-x: auto; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
     .stats-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
     .stat-card { background: white; border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 120px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
     .stat-card .num { font-size: 28px; font-weight: 700; color: #1a6b3c; }
     .stat-card .label { font-size: 12px; color: #888; margin-top: 2px; }
 
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
-    th { background: #1a6b3c; color: white; padding: 12px 14px; text-align: left; font-size: 13px; font-weight: 600; }
+    table { width: 100%; min-width: 960px; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; }
+    th { background: #1a6b3c; color: white; padding: 12px 14px; text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap; }
     td { padding: 12px 14px; border-bottom: 1px solid #f0f0f0; font-size: 13px; vertical-align: top; }
+    th:nth-child(1), td:nth-child(1) { min-width: 160px; }  /* Mã báo cáo */
+    th:nth-child(2), td:nth-child(2) { min-width: 90px; }   /* Loại */
+    th:nth-child(3), td:nth-child(3) { min-width: 180px; }  /* Người báo cáo */
+    th:nth-child(4), td:nth-child(4) { min-width: 150px; }  /* Tài khoản */
+    th:nth-child(5), td:nth-child(5) { min-width: 260px; }  /* Vấn đề */
+    th:nth-child(6), td:nth-child(6) { min-width: 90px; }   /* Khẩn cấp */
+    th:nth-child(7), td:nth-child(7) { min-width: 130px; }  /* Trạng thái */
+    th:nth-child(8), td:nth-child(8) { min-width: 170px; }  /* Cập nhật */
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #f9fffe; }
 
@@ -152,21 +161,23 @@
     <button class="btn btn-sm" onclick="loadReports()">🔄 Làm mới</button>
   </div>
 
-  <table id="reportsTable">
-    <thead>
-      <tr>
-        <th>Mã báo cáo</th>
-        <th>Loại</th>
-        <th>Người báo cáo</th>
-        <th>Tài khoản</th>
-        <th>Vấn đề</th>
-        <th>Khẩn cấp</th>
-        <th>Trạng thái</th>
-        <th>Cập nhật</th>
-      </tr>
-    </thead>
-    <tbody id="reportsBody"></tbody>
-  </table>
+  <div class="table-scroll">
+    <table id="reportsTable">
+      <thead>
+        <tr>
+          <th>Mã báo cáo</th>
+          <th>Loại</th>
+          <th>Người báo cáo</th>
+          <th>Tài khoản</th>
+          <th>Vấn đề</th>
+          <th>Khẩn cấp</th>
+          <th>Trạng thái</th>
+          <th>Cập nhật</th>
+        </tr>
+      </thead>
+      <tbody id="reportsBody"></tbody>
+    </table>
+  </div>
 </div>
 
 <script>
@@ -245,7 +256,7 @@
           <td class="${r.type === 'bug' ? 'type-bug' : 'type-admin'}">${r.type === 'bug' ? '🐛 Bug' : '📋 Admin'}</td>
           <td>${escapeHtml(r.email || r.name || '')}</td>
           <td>${escapeHtml(r.account || '')}</td>
-          <td style="max-width:200px;word-break:break-word">${escapeHtml((r.summary || r.issue || '').substring(0, 80))}</td>
+          <td>${escapeHtml((r.summary || r.issue || '').substring(0, 100))}</td>
           <td class="${urgencyClass}">${r.urgency || ''}</td>
           <td><span class="status-badge ${statusClass}">${r.status || ''}</span></td>
           <td onclick="event.stopPropagation()">
