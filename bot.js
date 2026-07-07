@@ -20,8 +20,9 @@ const { postToSlack }                     = require('./slack');
 const { saveReport, getReport, updateStatus } = require('./store');
 const { conductConversation }             = require('./claude');
 
-// ── Session persistence ───────────────────────────────────────────────────
-const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+// ── Data directory — use DATA_DIR env var if set (for Fly.io volumes) ───────
+const DATA_DIR      = process.env.DATA_DIR || __dirname;
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 let sessions = {};
 
 try {
@@ -112,11 +113,19 @@ function parseQuickReplies(text) {
   return match[1].split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// Parse [HINT:name] signals — returns array of hint keys or null.
+function parseHints(text) {
+  const matches = [...text.matchAll(/\[HINT:([^\]]+)\]/g)];
+  if (!matches.length) return null;
+  return matches.map(m => m[1].trim());
+}
+
 // Strip all bot signals from the display text.
 function stripSignals(text) {
   return text
     .replace(/\[REPORT_READY\][\s\S]*/g, '') // everything from signal onwards
     .replace(/\[QR:[^\]]*\]/g, '')           // quick-reply markers
+    .replace(/\[HINT:[^\]]*\]/g, '')         // hint image markers
     .trim();
 }
 
@@ -295,15 +304,17 @@ async function handleCollecting(session, sessionId, text, images) {
   }
 
   // ── Normal response — relay Claude's message as-is ────────────────────
-  const quickReplies  = parseQuickReplies(rawResponse);
-  const displayText   = stripSignals(rawResponse);
+  const quickReplies = parseQuickReplies(rawResponse);
+  const hints        = parseHints(rawResponse);
+  const displayText  = stripSignals(rawResponse);
 
   history.push({ role: 'assistant', content: displayText || rawResponse });
   persistSessions();
 
   return {
     messages:     [displayText || rawResponse],
-    quickReplies: quickReplies || null
+    quickReplies: quickReplies || null,
+    hints:        hints || null
   };
 }
 
@@ -346,42 +357,106 @@ async function handleEmail(session, sessionId, text) {
   };
 }
 
+// ── Safe date formatter ───────────────────────────────────────────────────
+function safeDate() {
+  try {
+    return new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
+// ── Plain-text Slack fallback (used when webhook fails) ───────────────────
+function buildFallbackText(data, reportId) {
+  const urgencyLabel = data.urgency === 'High' ? '🔴 High'
+    : data.urgency === 'Low' ? '🟢 Low' : '🟡 Medium';
+  const sep         = '─'.repeat(44);
+  const versionLine = data.appVersion ? `\nApp Version:   ${data.appVersion}` : '';
+  const stepsBlock  = data.steps ? `\n\nSTEPS TO REPRODUCE\n${data.steps}` : '';
+  const imgNote     = (data.images || []).length > 0
+    ? `\n\n[${data.images.length} attachment(s) were included]` : '';
+
+  return (
+    `[${data.category || 'App Bug'}] ${data.summary || (data.details || '').substring(0, 80)}\n\n` +
+    `Reporter:    ${data.email}\n` +
+    `PG / Farmer: ${data.account || '—'}\n` +
+    `Platform:    ${data.platform || '—'}${versionLine}\n` +
+    `Urgency:     ${urgencyLabel}\n` +
+    `Submitted:   ${safeDate()} (GMT+7)\n\n` +
+    `${sep}\n\n` +
+    `DESCRIPTION\n${data.details || ''}${stepsBlock}${imgNote}\n\n` +
+    `${sep}\n` +
+    `Report ID: ${reportId}`
+  );
+}
+
 // ── STATE: confirm ────────────────────────────────────────────────────────
 async function handleConfirm(session, sessionId, text) {
   const { data } = session;
   const upper = (text || '').toUpperCase().trim();
 
   if (upper.includes('GỬI') || upper.includes('GUI') || upper.includes('✅') || upper.includes('SEND')) {
-    const reportId    = generateReportId();
-    const slackResult = await postToSlack({ ...data, reportId });
+    const reportId = generateReportId();
 
-    saveReport(reportId, {
-      email:        data.email,
-      account:      data.account      || '',
-      platform:     data.platform     || '',
-      appVersion:   data.appVersion   || '',
-      category:     data.category     || 'App Bug',
-      summary:      data.summary      || '',
-      issue:        data.summary      || '',
-      details:      data.details      || '',
-      steps:        data.steps        || '',
-      urgency:      data.urgency      || 'Medium',
-      imageCount:   (data.images || []).length,
-      status:       'In Progress',
-      slackTs:      slackResult?.ts       || null,
-      slackChannel: slackResult?.channel  || null,
-      createdAt:    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
-      history:      (session.history || []).map(h => ({ role: h.role, content: h.content }))
-    });
+    // ── Attempt Slack post ──────────────────────────────────────────────
+    let slackResult = null;
+    let slackError  = null;
+    try {
+      slackResult = await postToSlack({ ...data, reportId });
+      if (!slackResult) slackError = 'Slack API từ chối — kiểm tra Bot Token và Channel ID';
+    } catch (err) {
+      slackError = err.message || 'Lỗi không xác định';
+      console.error('[bot] postToSlack threw:', err);
+    }
+
+    // ── Always save report locally ──────────────────────────────────────
+    try {
+      saveReport(reportId, {
+        email:        data.email,
+        account:      data.account      || '',
+        platform:     data.platform     || '',
+        appVersion:   data.appVersion   || '',
+        category:     data.category     || 'App Bug',
+        summary:      data.summary      || '',
+        issue:        data.summary      || '',
+        details:      data.details      || '',
+        steps:        data.steps        || '',
+        urgency:      data.urgency      || 'Medium',
+        imageCount:   (data.images || []).length,
+        status:       slackResult ? 'In Progress' : 'Slack Failed',
+        slackTs:      slackResult?.ts      || null,
+        slackChannel: slackResult?.channel || null,
+        createdAt:    safeDate(),
+        history:      (session.history || []).map(h => ({ role: h.role, content: h.content }))
+      });
+    } catch (saveErr) {
+      console.error('[bot] saveReport failed:', saveErr);
+    }
 
     delete sessions[sessionId];
     persistSessions();
 
+    // ── Success ─────────────────────────────────────────────────────────
+    if (slackResult) {
+      return {
+        messages: [
+          `✅ Báo cáo đã được gửi thành công!\n\n` +
+          `Mã báo cáo của bạn:\n*${reportId}*\n\n` +
+          `Lưu mã này để kiểm tra trạng thái sau. Nhập BẮT ĐẦU LẠI để gửi báo cáo mới.`
+        ],
+        done:     true,
+        reportId
+      };
+    }
+
+    // ── Slack failed — give fallback copy-paste text ─────────────────────
+    const fallback = buildFallbackText(data, reportId);
     return {
       messages: [
-        `✅ Báo cáo đã được gửi thành công!\n\n` +
-        `Mã báo cáo của bạn:\n*${reportId}*\n\n` +
-        `Lưu mã này để kiểm tra trạng thái sau. Nhập BẮT ĐẦU LẠI để gửi báo cáo mới.`
+        `⚠️ *Gửi tự động thất bại.* Lỗi: ${slackError}\n\n` +
+        `Báo cáo đã được lưu cục bộ (mã: *${reportId}*).\n\n` +
+        `Vui lòng copy nội dung sau và gửi thủ công vào nhóm admin:\n\n` +
+        `\`\`\`\n${fallback}\n\`\`\``
       ],
       done:     true,
       reportId
