@@ -16,7 +16,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { postToSlack }                     = require('./slack');
+const { postToSlack, getLastSlackError }  = require('./slack');
 const { saveReport, getReport, updateStatus } = require('./store');
 const { conductConversation }             = require('./claude');
 
@@ -403,7 +403,9 @@ async function handleConfirm(session, sessionId, text) {
     let slackError  = null;
     try {
       slackResult = await postToSlack({ ...data, reportId });
-      if (!slackResult) slackError = 'Slack API từ chối — kiểm tra Bot Token và Channel ID';
+      if (!slackResult) {
+        slackError = getLastSlackError() || 'Slack API từ chối — kiểm tra Bot Token và Channel ID';
+      }
     } catch (err) {
       slackError = err.message || 'Lỗi không xác định';
       console.error('[bot] postToSlack threw:', err);
