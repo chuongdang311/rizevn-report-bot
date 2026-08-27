@@ -62,6 +62,23 @@
     .filter-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
     .filter-row select, .filter-row input { padding: 8px 12px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 14px; }
 
+    /* ── Resend button ── */
+    .btn-resend {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #fff; color: #1a6b3c; border: 1.5px solid #1a6b3c;
+      padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      cursor: pointer; white-space: nowrap; margin-top: 6px;
+    }
+    .btn-resend:hover:not(:disabled) { background: #1a6b3c; color: #fff; }
+    .btn-resend:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-resend.failed { border-color: #dc2626; color: #dc2626; }
+    .btn-resend.failed:hover:not(:disabled) { background: #dc2626; color: #fff; }
+    .resend-note { font-size: 11px; margin-top: 4px; line-height: 1.4; }
+    .resend-note.ok  { color: #059669; }
+    .resend-note.err { color: #dc2626; word-break: break-word; }
+
+    .status-failed { background: #fee2e2; color: #991b1b; }
+
     .urgency-high { color: #dc2626; font-weight: 600; }
     .urgency-medium { color: #d97706; }
     .urgency-low { color: #059669; }
@@ -152,6 +169,7 @@
       <option value="Đã xử lý">Đã xử lý</option>
       <option value="Cần thêm thông tin">Cần thêm thông tin</option>
       <option value="Không tái hiện được">Không tái hiện được</option>
+      <option value="Slack Failed">⚠️ Gửi Slack lỗi</option>
     </select>
     <select id="filterType" onchange="renderTable()">
       <option value="">Tất cả loại</option>
@@ -248,7 +266,9 @@
 
     body.innerHTML = filtered.map(r => {
       const urgencyClass = r.urgency === 'High' ? 'urgency-high' : r.urgency === 'Low' ? 'urgency-low' : 'urgency-medium';
-      const statusClass = r.status === 'Đã xử lý' ? 'status-done' : r.status === 'Cần thêm thông tin' ? 'status-need-info' : r.status === 'Không tái hiện được' ? 'status-cant-repro' : 'status-processing';
+      const isFailed    = r.status === 'Slack Failed';
+      const statusClass = isFailed ? 'status-failed' : r.status === 'Đã xử lý' ? 'status-done' : r.status === 'Cần thêm thông tin' ? 'status-need-info' : r.status === 'Không tái hiện được' ? 'status-cant-repro' : 'status-processing';
+      const statusText  = isFailed ? '⚠️ Gửi Slack lỗi' : (r.status || '');
       const idx = allReports.indexOf(r);
       return `
         <tr class="clickable-row" onclick="openPanel(${idx})">
@@ -258,7 +278,7 @@
           <td>${escapeHtml(r.account || '')}</td>
           <td>${escapeHtml((r.summary || r.issue || '').substring(0, 100))}</td>
           <td class="${urgencyClass}">${r.urgency || ''}</td>
-          <td><span class="status-badge ${statusClass}">${r.status || ''}</span></td>
+          <td><span class="status-badge ${statusClass}">${statusText}</span></td>
           <td onclick="event.stopPropagation()">
             <select onchange="updateStatus('${r.reportId}', this.value)">
               <option value="">Đổi trạng thái...</option>
@@ -267,6 +287,14 @@
               <option value="Cần thêm thông tin">Cần thêm thông tin</option>
               <option value="Không tái hiện được">Không tái hiện được</option>
             </select>
+            <br />
+            <button class="btn-resend ${isFailed ? 'failed' : ''}"
+                    id="resend-${r.reportId}"
+                    onclick="resendReport('${r.reportId}')"
+                    title="Gửi lại báo cáo này vào kênh Slack">
+              ↗ Gửi lại Slack
+            </button>
+            <div class="resend-note" id="resend-note-${r.reportId}"></div>
           </td>
         </tr>
       `;
@@ -289,6 +317,57 @@
         renderTable();
       } else {
         alert('Cập nhật thất bại.');
+      }
+    });
+  }
+
+  // ── Re-send a report to Slack ─────────────────────────────────────────────
+  function resendFromPanel(reportId) { resendReport(reportId, 'panel-'); }
+
+  function resendReport(reportId, scope = '') {
+    const btn  = document.getElementById(`resend-${scope}${reportId}`);
+    const note = document.getElementById(`resend-note-${scope}${reportId}`);
+    if (!btn) return;
+
+    if (!confirm(`Gửi lại báo cáo ${reportId} vào kênh Slack?\n\nLưu ý: ảnh/video đính kèm không được lưu lại nên sẽ không kèm theo.`)) return;
+
+    btn.disabled    = true;
+    btn.textContent = '⏳ Đang gửi...';
+    if (note) { note.textContent = ''; note.className = 'resend-note'; }
+
+    fetch('/admin/resend', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ adminKey, reportId })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        btn.textContent = '✅ Đã gửi';
+        if (note) {
+          note.className   = 'resend-note ok';
+          note.textContent = data.imageCount > 0
+            ? `Đã gửi (${data.imageCount} ảnh gốc không kèm được)`
+            : 'Đã gửi vào Slack';
+        }
+        const report = allReports.find(r => r.reportId === reportId);
+        if (report) report.status = 'Đang xử lý';
+        setTimeout(() => { renderStats(); renderTable(); }, 1800);
+      } else {
+        btn.disabled    = false;
+        btn.textContent = '↗ Thử lại';
+        if (note) {
+          note.className   = 'resend-note err';
+          note.textContent = data.error || 'Gửi thất bại';
+        }
+      }
+    })
+    .catch(err => {
+      btn.disabled    = false;
+      btn.textContent = '↗ Thử lại';
+      if (note) {
+        note.className   = 'resend-note err';
+        note.textContent = `Lỗi kết nối: ${err.message}`;
       }
     });
   }
@@ -329,7 +408,20 @@
         </div>`;
     }
 
+    const panelFailed = r.status === 'Slack Failed';
+
     document.getElementById('panelBody').innerHTML = `
+      <div class="panel-section">
+        <h3>Gửi vào Slack</h3>
+        ${panelFailed ? '<p style="background:#fee2e2;color:#991b1b;font-size:12px">⚠️ Báo cáo này chưa được gửi thành công vào Slack.</p>' : ''}
+        <button class="btn-resend ${panelFailed ? 'failed' : ''}"
+                id="resend-panel-${r.reportId}"
+                onclick="resendFromPanel('${r.reportId}')">
+          ↗ Gửi lại vào kênh Slack
+        </button>
+        <div class="resend-note" id="resend-note-panel-${r.reportId}"></div>
+      </div>
+
       <div class="panel-section">
         <h3>Thông tin chung</h3>
         <div class="meta-grid">
