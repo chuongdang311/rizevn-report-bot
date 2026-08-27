@@ -41,10 +41,18 @@ function updateStatus(reportId, status) {
   return true;
 }
 
+// Merge arbitrary fields into an existing report (used by admin resend)
+function updateReport(reportId, patch) {
+  if (!reports[reportId]) return false;
+  reports[reportId] = { ...reports[reportId], ...patch };
+  persist();
+  return true;
+}
+
 function getAllReports() {
   return Object.values(reports).sort((a, b) =>
     (b.reportId || '').localeCompare(a.reportId || '')
   );
 }
 
-module.exports = { saveReport, getReport, updateStatus, getAllReports };
+module.exports = { saveReport, getReport, updateStatus, updateReport, getAllReports };
