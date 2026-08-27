@@ -1,7 +1,8 @@
 const express = require('express');
 const path = require('path');
 const { processMessage, greetMessage } = require('./bot');
-const { getReport, updateStatus } = require('./store');
+const { getReport, updateStatus, updateReport } = require('./store');
+const { postToSlack, getLastSlackError } = require('./slack');
 
 const app = express();
 app.use(express.json({ limit: '15mb' })); // Allow image uploads
@@ -60,6 +61,51 @@ app.post('/admin/status', (req, res) => {
   res.json({ success: true });
 });
 
+// Admin: re-send a report to Slack (for reports where the original post failed)
+app.post('/admin/resend', async (req, res) => {
+  const { adminKey, reportId } = req.body;
+  if (!process.env.ADMIN_KEY || adminKey !== process.env.ADMIN_KEY) {
+    return res.status(403).json({ success: false, error: 'Invalid admin key' });
+  }
+
+  const report = getReport(reportId);
+  if (!report) {
+    return res.status(404).json({ success: false, error: 'Report not found' });
+  }
+
+  // Pre-flight config check so the admin gets a precise reason, not a generic failure
+  if (!process.env.SLACK_BOT_TOKEN) {
+    return res.json({ success: false, error: 'SLACK_BOT_TOKEN is not set on the server' });
+  }
+  if (!process.env.SLACK_CHANNEL_ID) {
+    return res.json({ success: false, error: 'SLACK_CHANNEL_ID is not set on the server' });
+  }
+
+  try {
+    // Images are not retained in the store, so a resend is text-only
+    const result = await postToSlack({ ...report, images: [] });
+
+    if (!result) {
+      return res.json({
+        success: false,
+        error:   getLastSlackError() || 'Slack rejected the message. Run `fly logs` for details.'
+      });
+    }
+
+    updateReport(reportId, {
+      status:       'Đang xử lý',
+      slackTs:      result.ts,
+      slackChannel: result.channel,
+      resentAt:     new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
+    });
+
+    res.json({ success: true, imageCount: report.imageCount || 0 });
+  } catch (err) {
+    console.error('[admin] resend failed:', err);
+    res.json({ success: false, error: err.message || 'Unknown error' });
+  }
+});
+
 // Admin: list all reports
 app.get('/admin/reports', (req, res) => {
   const { adminKey } = req.query;
@@ -71,4 +117,4 @@ app.get('/admin/reports', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Rize Report Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Rize Report Bot running on port ${PORT}`));
