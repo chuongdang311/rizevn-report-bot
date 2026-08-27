@@ -16,6 +16,11 @@ const fetch = require('node-fetch');
 
 const SLACK_API = 'https://slack.com/api';
 
+// Records why the most recent postToSlack() failed, so callers can show a
+// precise reason instead of a generic "failed" message.
+let lastSlackError = null;
+function getLastSlackError() { return lastSlackError; }
+
 function slackHeaders() {
   return {
     'Content-Type': 'application/json; charset=utf-8',
@@ -123,7 +128,12 @@ async function postToSlack(report) {
   const token = process.env.SLACK_BOT_TOKEN;
   const channel = process.env.SLACK_CHANNEL_ID;
 
+  lastSlackError = null;
+
   if (!token || !channel) {
+    lastSlackError = !token
+      ? 'SLACK_BOT_TOKEN is not set on the server'
+      : 'SLACK_CHANNEL_ID is not set on the server';
     console.error('Missing SLACK_BOT_TOKEN or SLACK_CHANNEL_ID');
     return null;
   }
@@ -189,11 +199,24 @@ _React with ✅ when resolved_`;
     });
     result = await response.json();
   } catch (e) {
+    lastSlackError = `Network error contacting Slack: ${e.message}`;
     console.error('Slack post failed:', e.message);
     return null;
   }
 
   if (!result.ok) {
+    const hints = {
+      invalid_auth:      'SLACK_BOT_TOKEN is invalid or revoked — regenerate it in Slack and run: fly secrets set SLACK_BOT_TOKEN=xoxb-...',
+      not_authed:        'No SLACK_BOT_TOKEN was sent with the request.',
+      account_inactive:  'The Slack bot user has been deactivated.',
+      channel_not_found: 'SLACK_CHANNEL_ID is wrong, or the bot cannot see that channel.',
+      not_in_channel:    'The bot is not a member of the channel — invite it with /invite @YourBot',
+      is_archived:       'The target Slack channel is archived.',
+      missing_scope:     'The bot token is missing a required scope (chat:write, files:write). Reinstall the app.',
+      ratelimited:       'Slack rate-limited the request. Wait a moment and try again.'
+    };
+    lastSlackError = `Slack API error: ${result.error}` +
+      (hints[result.error] ? ` — ${hints[result.error]}` : '');
     console.error('Slack API error:', result.error);
     return null;
   }
@@ -243,4 +266,4 @@ async function getSlackReactionStatus(ts, channel) {
   }
 }
 
-module.exports = { postToSlack, getSlackReactionStatus };
+module.exports = { postToSlack, getSlackReactionStatus, getLastSlackError };
