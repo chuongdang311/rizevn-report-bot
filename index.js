@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { processMessage, greetMessage } = require('./bot');
-const { getReport, updateStatus, updateReport } = require('./store');
+const { getReport, updateStatus, updateReport, getReportImages } = require('./store');
 const { postToSlack, getLastSlackError } = require('./slack');
 
 const app = express();
@@ -82,8 +82,9 @@ app.post('/admin/resend', async (req, res) => {
   }
 
   try {
-    // Images are not retained in the store, so a resend is text-only
-    const result = await postToSlack({ ...report, images: [] });
+    // Re-attach any images that were persisted at submission time
+    const images = getReportImages(reportId);
+    const result = await postToSlack({ ...report, images });
 
     if (!result) {
       return res.json({
@@ -99,7 +100,7 @@ app.post('/admin/resend', async (req, res) => {
       resentAt:     new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     });
 
-    res.json({ success: true, imageCount: report.imageCount || 0 });
+    res.json({ success: true, imageCount: images.length });
   } catch (err) {
     console.error('[admin] resend failed:', err);
     res.json({ success: false, error: err.message || 'Unknown error' });

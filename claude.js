@@ -355,14 +355,30 @@ CRITICAL RULES:
     const cleaned = raw.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
     const parsed  = JSON.parse(cleaned);
     return {
-      heading:     parsed.heading     || fallback.heading,
-      description: parsed.description || fallback.description,
-      account:     parsed.account     || fallback.account,
-      steps:       parsed.steps       || fallback.steps
+      heading:     asText(parsed.heading)     || fallback.heading,
+      description: asText(parsed.description) || fallback.description,
+      account:     asText(parsed.account)     || fallback.account,
+      steps:       asText(parsed.steps)       || fallback.steps
     };
   } catch (e) {
     return fallback;
   }
+}
+
+// Claude's JSON response is expected to use plain strings for every field,
+// but models occasionally return an array (e.g. one entry per step) or an
+// object instead. Normalize anything we get back to a string so downstream
+// code (e.g. slack.js calling .trim() on these fields) never throws.
+function asText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join('\n');
+  if (typeof value === 'object') {
+    // Common shape: { step: "..." } or similar — fall back to JSON.
+    try { return Object.values(value).map(asText).filter(Boolean).join('\n'); }
+    catch (e) { return String(value); }
+  }
+  return String(value);
 }
 
 // ── Legacy helpers (kept for reference) ──────────────────────────────────

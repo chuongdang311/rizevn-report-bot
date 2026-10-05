@@ -152,6 +152,27 @@ async function postToSlack(report) {
     // Elaboration is optional — continue with originals
   }
 
+  // Defense-in-depth: whatever elaborateReport returned, make sure every
+  // field we're about to call string methods on is actually a string.
+  // A bad/unexpected Claude response here must never abort the whole send
+  // (that previously made both the message AND its attachments fail).
+  const toText = (v) => {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.map(toText).filter(Boolean).join('\n');
+    if (typeof v === 'object') {
+      try { return Object.values(v).map(toText).filter(Boolean).join('\n'); }
+      catch (e) { return String(v); }
+    }
+    return String(v);
+  };
+  elaborated = {
+    heading:     toText(elaborated.heading)     || report.summary || 'Issue reported',
+    description: toText(elaborated.description) || report.details || '',
+    account:     toText(elaborated.account)     || report.account || '',
+    steps:       toText(elaborated.steps)        || report.steps   || ''
+  };
+
   const urgencyLabel = report.urgency === 'High' ? '🔴  High'
     : report.urgency === 'Low' ? '🟢  Low' : '🟡  Medium';
 

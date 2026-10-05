@@ -17,7 +17,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { postToSlack, getLastSlackError }  = require('./slack');
-const { saveReport, getReport, updateStatus } = require('./store');
+const { saveReport, getReport, updateStatus, saveReportImages } = require('./store');
 const { conductConversation }             = require('./claude');
 
 // ── Data directory — use DATA_DIR env var if set (for Fly.io volumes) ───────
@@ -409,6 +409,14 @@ async function handleConfirm(session, sessionId, text) {
     } catch (err) {
       slackError = err.message || 'Lỗi không xác định';
       console.error('[bot] postToSlack threw:', err);
+    }
+
+    // ── Persist attachments to disk so a failed send can be retried later
+    //    with its images intact (reports.json itself stays text-only) ────
+    try {
+      saveReportImages(reportId, data.images || []);
+    } catch (imgErr) {
+      console.error('[bot] saveReportImages failed:', imgErr);
     }
 
     // ── Always save report locally ──────────────────────────────────────
